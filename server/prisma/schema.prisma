@@ -1,0 +1,171 @@
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_URL")
+  extensions = [vector]
+}
+
+generator client {
+  provider             = "prisma-client-py"
+  interface            = "asyncio"
+  recursive_type_depth = 5
+  previewFeatures      = ["postgresqlExtensions"]
+}
+
+enum ProjectStatus {
+  PLANNING
+  RESEARCHING
+  COMPLETED
+  FAILED
+}
+
+enum RepoStatus {
+  PENDING
+  CLONING
+  INDEXING
+  READY
+  FAILED
+}
+
+enum SenderRole {
+  USER
+  AI
+  SYSTEM
+}
+
+enum ChatMode {
+  ARCHITECT
+  ANALYST
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  fullName  String?
+  avatarUrl String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  projects     Project[]
+  repositories Repository[]
+  chatSessions ChatSession[]
+
+  @@map("users")
+}
+
+model Project {
+  id          String        @id @default(uuid())
+  userId      String
+  title       String
+  description String        @db.Text
+  status      ProjectStatus @default(PLANNING)
+
+  researchReport Json?
+  blueprint      String?  @db.Text 
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  suggestedRepos ProjectRepository[]
+  chatSessions   ChatSession[]
+
+  @@map("projects")
+}
+
+model ProjectRepository {
+  projectId    String
+  repositoryId String
+  relevanceScore Float?
+  notes          String?
+
+  project    Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  repository Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, repositoryId])
+  @@map("project_repositories")
+}
+
+model Repository {
+  id            String     @id @default(uuid())
+  userId        String?
+  url           String     @unique
+  owner         String
+  name          String
+  defaultBranch String     @default("main")
+  description   String?
+  language      String?
+  stars         Int        @default(0)
+  
+  status        RepoStatus @default(PENDING)
+  errorMessage  String?
+  
+  lastIndexedAt     DateTime?
+  latestCommitHash  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user           User?               @relation(fields: [userId], references: [id])
+  linkedProjects ProjectRepository[]
+  codeChunks     CodeChunk[]
+  chatSessions   ChatSession[]
+
+  @@map("repositories")
+}
+
+model CodeChunk {
+  id           String @id @default(uuid())
+  repositoryId String
+
+  // Vector embedding handled by pgvector
+  embedding Unsupported("vector(768)")?
+
+  content  String @db.Text
+  filePath String
+  startLine Int
+  endLine   Int
+  
+  commitHash   String?
+  authorName   String?
+  committedAt  DateTime?
+
+  repository Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@map("code_chunks")
+}
+
+model ChatSession {
+  id        String   @id @default(uuid())
+  userId    String
+  mode      ChatMode
+  title     String?
+
+  projectId    String?
+  repositoryId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project    Project?    @relation(fields: [projectId], references: [id])
+  repository Repository? @relation(fields: [repositoryId], references: [id])
+  messages   Message[]
+
+  @@map("chat_sessions")
+}
+
+model Message {
+  id        String     @id @default(uuid())
+  sessionId String
+  role      SenderRole
+  content   String     @db.Text
+
+  sources Json? 
+
+  createdAt DateTime @default(now())
+
+  session ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("messages")
+}

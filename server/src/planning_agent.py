@@ -1,0 +1,178 @@
+import os
+import json
+import re
+import logging
+from datetime import datetime
+from google import genai
+from google.genai import types
+from src.agents import (
+    research_agent,
+    writer_agent,
+    editor_agent,
+)
+
+logger = logging.getLogger(__name__)
+
+client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
+MODEL_NAME = 'gemini-flash-latest'
+
+
+def clean_json_block(raw: str) -> str:
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```[a-zA-Z]*\n?", "", raw)
+        raw = re.sub(r"\n?```$", "", raw)
+    return raw.strip("` \n")
+
+
+from typing import List
+import json, ast
+
+
+def planner_agent(topic: str) -> List[str]:
+    # Prompts are in d:/RepoGPT/server/prompts
+    # File is in d:/RepoGPT/server/src/planning_agent.py
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    prompt_path = os.path.join(base_dir, "prompts", "planner_agent.md")
+    with open(prompt_path, "r", encoding="utf-8") as f:
+        prompt_template = f.read()
+    
+    prompt = prompt_template.format(topic=topic)
+
+    response = client.models.generate_content(
+        model=MODEL_NAME,
+        contents=prompt,
+        config=types.GenerateContentConfig(temperature=0.2)
+    )
+    raw = response.text.strip()
+
+    def _coerce_to_list(s: str) -> List[str]:
+        # Clean potential markdown fences
+        s = s.strip()
+        if s.startswith("```"):
+            s = re.sub(r"^```[a-zA-Z]*\n?", "", s)
+            s = re.sub(r"\n?```$", "", s)
+        
+        # Try strict JSON
+        try:
+            obj = json.loads(s)
+            if isinstance(obj, list) and all(isinstance(x, str) for x in obj):
+                return obj
+        except:
+            pass
+            
+        # Try Python literal list
+        try:
+            obj = ast.literal_eval(s)
+            if isinstance(obj, list) and all(isinstance(x, str) for x in obj):
+                return obj
+        except:
+            pass
+            
+        # Fallback split lines if it looks like a list
+        if "\n" in s:
+            lines = [l.strip("-* 123456789. ") for l in s.split("\n") if l.strip()]
+            return [l for l in lines if len(l) > 10]
+            
+        return []
+
+    steps = _coerce_to_list(raw)
+
+    # Minimal validation to ensure the workflow is usable
+    final_required = "Writer agent: Generate a 'Project Blueprint' that lists Core Features, Recommended Stack, and a table of Reference GitHub Repositories (with links)."
+    
+    if not steps:
+        # Fallback only if model fails completely
+        return [
+            f"Research agent: Use Tavily to research architecture patterns for '{topic}'.",
+            f"Research agent: Use github_search_tool to find repositories matching '{topic}'.",
+            "Research agent: Synthesize data and identify core technical requirements.",
+            final_required
+        ]
+
+    # Ensure final step exists
+    if not any("Project Blueprint" in s for s in steps):
+        steps.append(final_required)
+    
+    return steps[:7]
+
+
+def executor_agent_step(step_title: str, history: list, prompt: str):
+    """
+    Executes a step of the executor agent.
+    Returns:
+        - step_title (str)
+        - agent_name (str)
+        - output (str)
+    """
+
+    # Construir contexto enriquecido estructurado
+    context = f"📘 User Prompt:\n{prompt}\n\n📜 History so far:\n"
+    for i, (desc, agent, output) in enumerate(history):
+        if "draft" in desc.lower() or agent == "writer_agent":
+            context += f"\n✍️ Draft (Step {i + 1}):\n{output.strip()}\n"
+        elif "feedback" in desc.lower() or agent == "editor_agent":
+            context += f"\n🧠 Feedback (Step {i + 1}):\n{output.strip()}\n"
+        elif "research" in desc.lower() or agent == "research_agent":
+            context += f"\n🔍 Research (Step {i + 1}):\n{output.strip()}\n"
+        else:
+            context += f"\n🧩 Other (Step {i + 1}) by {agent}:\n{output.strip()}\n"
+
+    enriched_task = f"""{context}
+
+🧩 Your next task:
+{step_title}
+"""
+
+    # Seleccionar agente basado en el paso
+    step_lower = step_title.lower()
+    if "research" in step_lower:
+        max_retries = 1
+        current_attempt = 0
+        final_content = ""
+        
+        while current_attempt <= max_retries:
+            logger.info(f"Attempt {current_attempt + 1} for step: {step_title}")
+            raw_output, _ = research_agent(prompt=enriched_task)
+            
+            try:
+                parsed = json.loads(raw_output)
+                content = parsed["content"]
+                
+                # Use Critique Agent
+                from src.agents import critique_agent
+                evaluation = critique_agent(goal=prompt, output=content)
+                
+                if evaluation.get("critique") == "bad":
+                    reason = evaluation.get('reason', 'Unknown reason')
+                    logger.warning(f"🔄 Attempt {current_attempt + 1} failed critique: {reason}")
+                    
+                    if current_attempt < max_retries:
+                        # Feed the critique back for the next attempt
+                        enriched_task += f"\n\n⚠️ CRITIQUE FROM PREVIOUS ATTEMPT:\n{reason}\n\nPlease revise your research to address the critique above."
+                        current_attempt += 1
+                        continue
+                    else:
+                        # Last attempt failed, return with warning
+                        final_content = f"⚠️ SELF-CORRECTION FAILED after {max_retries + 1} attempts.\nReason: {reason}\n\n{content}"
+                else:
+                    logger.info(f"✅ Critique passed on attempt {current_attempt + 1}")
+                    final_content = content
+                break
+            except Exception as e:
+                logger.error(f"Error in research processing: {e}")
+                final_content = raw_output
+                break
+
+        return step_title, "research_agent", final_content
+    elif "draft" in step_lower or "write" in step_lower or "blueprint" in step_lower:
+        content, _ = writer_agent(prompt=enriched_task)
+        return step_title, "writer_agent", content
+    elif "revise" in step_lower or "edit" in step_lower or "feedback" in step_lower:
+        content, _ = editor_agent(prompt=enriched_task)
+        return step_title, "editor_agent", content
+    else:
+        # Fallback to writer for anything else to avoid crashing
+        logger.warning(f"Unknown step type: {step_title}, falling back to writer_agent")
+        content, _ = writer_agent(prompt=enriched_task)
+        return step_title, "writer_agent", content
