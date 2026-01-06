@@ -14,7 +14,7 @@ from src.agents import (
 logger = logging.getLogger(__name__)
 
 client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
-MODEL_NAME = 'gemini-flash-latest'
+MODEL_NAME = os.environ.get("LLM_MODEL_NAME", "gemini-2.5-flash-lite")
 
 
 def clean_json_block(raw: str) -> str:
@@ -30,8 +30,6 @@ import json, ast
 
 
 def planner_agent(topic: str) -> List[str]:
-    # Prompts are in d:/RepoGPT/server/prompts
-    # File is in d:/RepoGPT/server/src/planning_agent.py
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     prompt_path = os.path.join(base_dir, "prompts", "planner_agent.md")
     with open(prompt_path, "r", encoding="utf-8") as f:
@@ -47,13 +45,11 @@ def planner_agent(topic: str) -> List[str]:
     raw = response.text.strip()
 
     def _coerce_to_list(s: str) -> List[str]:
-        # Clean potential markdown fences
         s = s.strip()
         if s.startswith("```"):
             s = re.sub(r"^```[a-zA-Z]*\n?", "", s)
             s = re.sub(r"\n?```$", "", s)
         
-        # Try strict JSON
         try:
             obj = json.loads(s)
             if isinstance(obj, list) and all(isinstance(x, str) for x in obj):
@@ -61,7 +57,6 @@ def planner_agent(topic: str) -> List[str]:
         except:
             pass
             
-        # Try Python literal list
         try:
             obj = ast.literal_eval(s)
             if isinstance(obj, list) and all(isinstance(x, str) for x in obj):
@@ -69,7 +64,6 @@ def planner_agent(topic: str) -> List[str]:
         except:
             pass
             
-        # Fallback split lines if it looks like a list
         if "\n" in s:
             lines = [l.strip("-* 123456789. ") for l in s.split("\n") if l.strip()]
             return [l for l in lines if len(l) > 10]
@@ -78,11 +72,9 @@ def planner_agent(topic: str) -> List[str]:
 
     steps = _coerce_to_list(raw)
 
-    # Minimal validation to ensure the workflow is usable
     final_required = "Writer agent: Generate a 'Project Blueprint' that lists Core Features, Recommended Stack, and a table of Reference GitHub Repositories (with links)."
     
     if not steps:
-        # Fallback only if model fails completely
         return [
             f"Research agent: Use Tavily to research architecture patterns for '{topic}'.",
             f"Research agent: Use github_search_tool to find repositories matching '{topic}'.",
@@ -90,7 +82,6 @@ def planner_agent(topic: str) -> List[str]:
             final_required
         ]
 
-    # Ensure final step exists
     if not any("Project Blueprint" in s for s in steps):
         steps.append(final_required)
     
@@ -106,8 +97,7 @@ def executor_agent_step(step_title: str, history: list, prompt: str):
         - output (str)
     """
 
-    # Construir contexto enriquecido estructurado
-    context = f"📘 User Prompt:\n{prompt}\n\n📜 History so far:\n"
+    context = f"User Prompt:\n{prompt}\n\nHistory so far:\n"
     
     def truncate_text(text: str, max_chars: int = 2000) -> str:
         if len(text) <= max_chars:
@@ -136,7 +126,6 @@ def executor_agent_step(step_title: str, history: list, prompt: str):
 {step_title}
 """
 
-    # Seleccionar agente basado en el paso
     step_lower = step_title.lower()
     if "research" in step_lower:
         max_retries = 1
@@ -150,25 +139,23 @@ def executor_agent_step(step_title: str, history: list, prompt: str):
             try:
                 parsed = json.loads(raw_output)
                 content = parsed["content"]
-                
-                # Use Critique Agent
+                import time
+                time.sleep(5) 
+
                 from src.agents import critique_agent
                 evaluation = critique_agent(goal=prompt, output=content)
                 
                 if evaluation.get("critique") == "bad":
                     reason = evaluation.get('reason', 'Unknown reason')
-                    logger.warning(f"🔄 Attempt {current_attempt + 1} failed critique: {reason}")
+                    logger.warning(f"Attempt {current_attempt + 1} failed critique: {reason}")
                     
                     if current_attempt < max_retries:
-                        # Feed the critique back for the next attempt
-                        enriched_task += f"\n\n⚠️ CRITIQUE FROM PREVIOUS ATTEMPT:\n{reason}\n\nPlease revise your research to address the critique above."
+                        enriched_task += f"\n\n CRITIQUE FROM PREVIOUS ATTEMPT:\n{reason}\n\nPlease revise your research to address the critique above."
                         current_attempt += 1
                         continue
                     else:
-                        # Last attempt failed, return with warning
-                        final_content = f"⚠️ SELF-CORRECTION FAILED after {max_retries + 1} attempts.\nReason: {reason}\n\n{content}"
+                        final_content = f" SELF-CORRECTION FAILED after {max_retries + 1} attempts.\nReason: {reason}\n\n{content}"
                 else:
-                    logger.info(f"✅ Critique passed on attempt {current_attempt + 1}")
                     final_content = content
                 break
             except Exception as e:
@@ -184,7 +171,6 @@ def executor_agent_step(step_title: str, history: list, prompt: str):
         content, _ = editor_agent(prompt=enriched_task)
         return step_title, "editor_agent", content
     else:
-        # Fallback to writer for anything else to avoid crashing
         logger.warning(f"Unknown step type: {step_title}, falling back to writer_agent")
         content, _ = writer_agent(prompt=enriched_task)
         return step_title, "writer_agent", content

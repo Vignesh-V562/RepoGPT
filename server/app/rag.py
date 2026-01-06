@@ -4,7 +4,7 @@ from fastembed import TextEmbedding
 from app.supabase_client import supabase
 
 client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY", ""))
-MODEL_NAME = 'gemini-flash-latest'
+MODEL_NAME = os.environ.get("LLM_MODEL_NAME", "gemini-2.5-flash-lite")
 embedding_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
 
 # Try to load cross-encoder for reranking (Phase 2)

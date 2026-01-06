@@ -179,12 +179,8 @@ async def chat_analyze(request: AnalystRequest):
             for i, plan_step_title in enumerate(initial_plan_steps):
                 yield f"data: {json.dumps({'type': 'status', 'content': f'Executing: {plan_step_title}'})}\n\n"
                 
-                # Add a small delay between steps to avoid Gemini Free Tier RPM limits (15 RPM)
                 import asyncio
-                await asyncio.sleep(4)
-
-                # We run this in a thread or just call it if it's not too slow, but since it involves LLM calls, 
-                # we do it sequentially here for the stream.
+                await asyncio.sleep(15) 
                 actual_step_description, agent_name, output = executor_agent_step(
                     plan_step_title, execution_history, request.query
                 )

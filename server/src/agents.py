@@ -1,16 +1,37 @@
 import os
-from google import genai
-from google.genai import types
-from datetime import datetime
+import time
+import random
 import logging
 import json
+from datetime import datetime
+from google import genai
+from google.genai import types
 
 logger = logging.getLogger(__name__)
 
+def generate_with_retry(model, contents, config, retries=5, base_delay=10):
+    """Helper to retry API calls on rate limit errors with exponential backoff."""
+    for attempt in range(retries):
+        try:
+            return client.models.generate_content(
+                model=model,
+                contents=contents,
+                config=config
+            )
+        except Exception as e:
+            error_str = str(e).lower()
+            if "429" in error_str or "503" in error_str or "resource" in error_str or "quota" in error_str or "overloaded" in error_str:
+                if attempt == retries - 1:
+                    logger.error(f"API Limit or Server error reached after {retries} retries: {e}")
+                    raise e
+                
+                sleep_time = (base_delay * (2 ** attempt)) + random.uniform(1, 5)
+                logger.warning(f"API Limit/Server hit. Retrying in {sleep_time:.1f}s... (Attempt {attempt+1}/{retries})")
+                time.sleep(sleep_time)
+            else:
+                raise e
+
 def load_prompt(filename, **kwargs):
-    # Prompts are in d:/RepoGPT/server/prompts
-    # File is in d:/RepoGPT/server/src/agents.py
-    # So we go up one level from src
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     path = os.path.join(base_dir, "prompts", filename)
     with open(path, "r", encoding="utf-8") as f:
@@ -27,10 +48,9 @@ from src.research_tools import (
 )
 
 client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
-MODEL_NAME = 'gemini-flash-latest'
+MODEL_NAME = os.environ.get("LLM_MODEL_NAME", "gemini-2.5-flash-lite")
 
 
-# === Research Agent ===
 def research_agent(
     prompt: str, model: str = "gemini-1.5-flash", return_messages: bool = False
 ):
@@ -48,7 +68,7 @@ def research_agent(
     tools = [github_search_tool, tavily_search_tool, wikipedia_search_tool, arxiv_search_tool, github_readme_tool]
     
     try:
-        response = client.models.generate_content(
+        response = generate_with_retry(
             model=MODEL_NAME,
             contents=full_prompt,
             config=types.GenerateContentConfig(
@@ -60,10 +80,8 @@ def research_agent(
         )
         content = response.text
         
-        # Extract tool calls (structured for frontend)
         tools_used = []
         try:
-            # The structure depends on the SDK version, let's use a safer approach
             calls = getattr(response.candidates[0], 'function_calls', [])
             for call in calls:
                 tools_used.append({
@@ -73,7 +91,6 @@ def research_agent(
         except (AttributeError, IndexError):
             pass
 
-        # Return structured data
         result = {
             "content": content,
             "tools_used": tools_used
@@ -83,7 +100,7 @@ def research_agent(
         return json.dumps(result), []
 
     except Exception as e:
-        logger.error(f"❌ Error: {e}")
+        logger.error(f"Error: {e}")
         error_result = {
             "content": f"[Model Error: {str(e)}]",
             "tools_used": []
@@ -106,7 +123,7 @@ def writer_agent(
     system_message = load_prompt("writer_agent.md")
 
     try:
-        response = client.models.generate_content(
+        response = generate_with_retry(
             model=MODEL_NAME,
             contents=prompt,
             config=types.GenerateContentConfig(
@@ -117,10 +134,10 @@ def writer_agent(
         )
         content = response.text
 
-        logger.info(f"✅ Output: {content[:100]}...")
+        logger.info(f"Output: {content[:100]}...")
         return content, []
     except Exception as e:
-        logger.error(f"❌ Error: {e}")
+        logger.error(f"Error: {e}")
         return f"[Model Error: {str(e)}]", []
 
 
@@ -136,7 +153,7 @@ def editor_agent(
     system_message = load_prompt("editor_agent.md")
 
     try:
-        response = client.models.generate_content(
+        response = generate_with_retry(
             model=MODEL_NAME,
             contents=prompt,
             config=types.GenerateContentConfig(
@@ -147,8 +164,8 @@ def editor_agent(
         content = response.text
         return content, []
     except Exception as e:
-        logger.error(f"❌ Error in Editor Agent: {e}")
-        return prompt, [] # return original as fallback
+        logger.error(f"Error in Editor Agent: {e}")
+        return prompt, [] 
 
 
 def critique_agent(goal: str, output: str):
@@ -160,7 +177,7 @@ def critique_agent(goal: str, output: str):
     prompt = load_prompt("critique_agent.md", goal=goal, output=output)
 
     try:
-        response = client.models.generate_content(
+        response = generate_with_retry(
             model=MODEL_NAME,
             contents=prompt,
             config=types.GenerateContentConfig(
@@ -168,12 +185,11 @@ def critique_agent(goal: str, output: str):
                 response_mime_type="application/json"
             )
         )
-        # Handle potential json string inside markdown if it happens
         raw = response.text.strip()
         if raw.startswith("```"):
              raw = re.sub(r"^```[a-zA-Z]*\n?", "", raw)
              raw = re.sub(r"\n?```$", "", raw)
         return json.loads(raw)
     except Exception as f:
-        logger.error(f"❌ Critique failed: {f}")
+        logger.error(f"Error in Critique Agent: {f}")
         return {"critique": "good", "reason": "System error in critic"}

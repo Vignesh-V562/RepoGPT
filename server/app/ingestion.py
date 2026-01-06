@@ -14,7 +14,7 @@ from app.supabase_client import supabase
 
 # Configure Gemini for file summarization
 client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY", ""))
-MODEL_NAME = 'gemini-flash-latest'
+MODEL_NAME = os.environ.get("LLM_MODEL_NAME", "gemini-2.5-flash-lite")
 
 # Local storage for repos (temporary)
 REPO_STORAGE_PATH = "./cloned_repos"
