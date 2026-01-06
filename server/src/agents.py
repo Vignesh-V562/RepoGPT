@@ -22,6 +22,8 @@ from src.research_tools import (
     github_search_tool,
     tavily_search_tool,
     wikipedia_search_tool,
+    arxiv_search_tool,
+    github_readme_tool,
 )
 
 client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
@@ -43,7 +45,7 @@ def research_agent(
         prompt=prompt
     )
 
-    tools = [github_search_tool, tavily_search_tool, wikipedia_search_tool]
+    tools = [github_search_tool, tavily_search_tool, wikipedia_search_tool, arxiv_search_tool, github_readme_tool]
     
     try:
         response = client.models.generate_content(
@@ -60,11 +62,16 @@ def research_agent(
         
         # Extract tool calls (structured for frontend)
         tools_used = []
-        for call in response.candidates[0].function_calls or []:
-            tools_used.append({
-                "name": call.name,
-                "args": call.args
-            })
+        try:
+            # The structure depends on the SDK version, let's use a safer approach
+            calls = getattr(response.candidates[0], 'function_calls', [])
+            for call in calls:
+                tools_used.append({
+                    "name": call.name,
+                    "args": call.args
+                })
+        except (AttributeError, IndexError):
+            pass
 
         # Return structured data
         result = {

@@ -94,7 +94,7 @@ def planner_agent(topic: str) -> List[str]:
     if not any("Project Blueprint" in s for s in steps):
         steps.append(final_required)
     
-    return steps[:7]
+    return steps[:5]
 
 
 def executor_agent_step(step_title: str, history: list, prompt: str):
@@ -108,15 +108,27 @@ def executor_agent_step(step_title: str, history: list, prompt: str):
 
     # Construir contexto enriquecido estructurado
     context = f"📘 User Prompt:\n{prompt}\n\n📜 History so far:\n"
+    
+    def truncate_text(text: str, max_chars: int = 2000) -> str:
+        if len(text) <= max_chars:
+            return text
+        return text[:max_chars] + f"\n\n... [TRUNCATED - Total {len(text)} characters] ..."
+
     for i, (desc, agent, output) in enumerate(history):
+        # We allow the very last step to be a bit longer if it's the draft we are currently editing
+        is_last_step = (i == len(history) - 1)
+        limit = 4000 if is_last_step else 2000
+        
+        truncated_output = truncate_text(output.strip(), max_chars=limit)
+        
         if "draft" in desc.lower() or agent == "writer_agent":
-            context += f"\n✍️ Draft (Step {i + 1}):\n{output.strip()}\n"
+            context += f"\n✍️ Draft (Step {i + 1}):\n{truncated_output}\n"
         elif "feedback" in desc.lower() or agent == "editor_agent":
-            context += f"\n🧠 Feedback (Step {i + 1}):\n{output.strip()}\n"
+            context += f"\n🧠 Feedback (Step {i + 1}):\n{truncated_output}\n"
         elif "research" in desc.lower() or agent == "research_agent":
-            context += f"\n🔍 Research (Step {i + 1}):\n{output.strip()}\n"
+            context += f"\n🔍 Research (Step {i + 1}):\n{truncated_output}\n"
         else:
-            context += f"\n🧩 Other (Step {i + 1}) by {agent}:\n{output.strip()}\n"
+            context += f"\n🧩 Other (Step {i + 1}) by {agent}:\n{truncated_output}\n"
 
     enriched_task = f"""{context}
 
