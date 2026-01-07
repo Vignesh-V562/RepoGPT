@@ -1,10 +1,8 @@
 import os
-from google import genai
+from src.llm_provider import llm
 from fastembed import TextEmbedding
 from app.supabase_client import supabase
 
-client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY", ""))
-MODEL_NAME = os.environ.get("LLM_MODEL_NAME", "gemini-2.5-flash-lite")
 embedding_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
 
 # Try to load cross-encoder for reranking (Phase 2)
@@ -72,12 +70,11 @@ FOLLOW-UP QUESTION: {query}
 STANDALONE QUERY:"""
     
     try:
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=prompt,
-            config={'temperature': 0}
+        condensed, _ = llm.generate_content(
+            mode="chat",
+            prompt=prompt
         )
-        condensed = response.text.strip()
+        condensed = condensed.strip()
         print(f"RAG: Condensed '{query}' -> '{condensed}'")
         return condensed
     except Exception as e:
@@ -277,15 +274,12 @@ Now provide your expert analysis:
     # 7. Stream Response
     yield {"type": "status", "content": "Generating technical analysis..."}
     try:
-        response_stream = client.models.generate_content_stream(
-            model=MODEL_NAME,
-            contents=prompt,
-            config={'temperature': 0}
-        )
-        
-        for chunk in response_stream:
-            if chunk.text:
-                yield {"type": "token", "content": chunk.text}
+        # Use analyst mode for repository-wide deep understanding (Llama 70B)
+        for chunk in llm.generate_content_stream(
+            mode="analyst",
+            prompt=prompt
+        ):
+            yield {"type": "token", "content": chunk}
     except Exception as e:
         print(f"LLM Error: {e}")
         yield {"type": "error", "content": f"Error generating response: {str(e)}"}

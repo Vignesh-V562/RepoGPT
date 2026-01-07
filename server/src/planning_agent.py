@@ -3,8 +3,7 @@ import json
 import re
 import logging
 from datetime import datetime
-from google import genai
-from google.genai import types
+from src.llm_provider import llm
 from src.agents import (
     research_agent,
     writer_agent,
@@ -12,9 +11,6 @@ from src.agents import (
 )
 
 logger = logging.getLogger(__name__)
-
-client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
-MODEL_NAME = os.environ.get("LLM_MODEL_NAME", "gemini-2.5-flash-lite")
 
 
 def clean_json_block(raw: str) -> str:
@@ -37,14 +33,15 @@ def planner_agent(topic: str) -> List[str]:
     
     prompt = prompt_template.format(topic=topic)
 
-    response = client.models.generate_content(
-        model=MODEL_NAME,
-        contents=prompt,
-        config=types.GenerateContentConfig(temperature=0.2)
+    raw, _ = llm.generate_content(
+        mode="architect",
+        prompt=prompt
     )
-    raw = response.text.strip()
+    raw = raw.strip()
+    logger.info(f"PLANNER: Raw response from LLM: {raw[:200]}...")
 
     def _coerce_to_list(s: str) -> List[str]:
+        # ... (rest of function)
         s = s.strip()
         if s.startswith("```"):
             s = re.sub(r"^```[a-zA-Z]*\n?", "", s)
@@ -71,6 +68,7 @@ def planner_agent(topic: str) -> List[str]:
         return []
 
     steps = _coerce_to_list(raw)
+    logger.info(f"PLANNER: Coerced steps: {steps}")
 
     final_required = "Writer agent: Generate a 'Project Blueprint' that lists Core Features, Recommended Stack, and a table of Reference GitHub Repositories (with links)."
     
@@ -128,7 +126,7 @@ def executor_agent_step(step_title: str, history: list, prompt: str):
 
     step_lower = step_title.lower()
     if "research" in step_lower:
-        max_retries = 1
+        max_retries = 2
         current_attempt = 0
         final_content = ""
         
@@ -140,7 +138,7 @@ def executor_agent_step(step_title: str, history: list, prompt: str):
                 parsed = json.loads(raw_output)
                 content = parsed["content"]
                 import time
-                time.sleep(5) 
+                time.sleep(1) 
 
                 from src.agents import critique_agent
                 evaluation = critique_agent(goal=prompt, output=content)

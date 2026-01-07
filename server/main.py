@@ -1,3 +1,9 @@
+import os
+from dotenv import load_dotenv
+
+# Load environment variables BEFORE importing any other local modules
+load_dotenv()
+
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -8,9 +14,10 @@ from app.rag import query_repo
 from src.planning_agent import planner_agent, executor_agent_step
 import uuid
 import json
-import os
 import sys
 import logging
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +158,7 @@ async def chat_analyze(request: AnalystRequest):
         import json
         full_response = ""
         execution_history = []
-        
+        logger.info(f"ARCHITECT: Starting response stream for session {session_id}")
         # Send Session ID
         yield f"data: {json.dumps({'type': 'session', 'sessionId': session_id})}\n\n"
         
@@ -168,22 +175,32 @@ async def chat_analyze(request: AnalystRequest):
             yield "data: [DONE]\n\n"
             return
 
+        logger.info(f"ARCHITECT: Processing non-greeting query: {request.query[:50]}...")
         yield f"data: {json.dumps({'type': 'status', 'content': 'Planning research strategy...'})}\n\n"
         
         try:
-            # Plan the workflow
-            initial_plan_steps = planner_agent(request.query)
+            # Plan the workflow - Run in thread pool as it's a blocking LLM call
+            logger.info("ARCHITECT: Calling planner_agent...")
+            loop = asyncio.get_event_loop()
+            with ThreadPoolExecutor() as pool:
+                initial_plan_steps = await loop.run_in_executor(
+                    pool, planner_agent, request.query
+                )
+            
+            logger.info(f"ARCHITECT: Plan generated with {len(initial_plan_steps) if initial_plan_steps else 0} steps")
+            if not initial_plan_steps:
+                raise ValueError("Planner failed to generate steps.")
+                
             yield f"data: {json.dumps({'type': 'plan', 'steps': initial_plan_steps})}\n\n"
             
             # Execute steps
             for i, plan_step_title in enumerate(initial_plan_steps):
                 yield f"data: {json.dumps({'type': 'status', 'content': f'Executing: {plan_step_title}'})}\n\n"
                 
-                import asyncio
-                await asyncio.sleep(15) 
-                actual_step_description, agent_name, output = executor_agent_step(
-                    plan_step_title, execution_history, request.query
-                )
+                with ThreadPoolExecutor() as pool:
+                    actual_step_description, agent_name, output = await loop.run_in_executor(
+                        pool, executor_agent_step, plan_step_title, execution_history, request.query
+                    )
                 
                 execution_history.append([plan_step_title, actual_step_description, output])
                 
@@ -213,6 +230,9 @@ async def chat_analyze(request: AnalystRequest):
                 logger.error(f"Failed to save final AI report: {e}")
             
         except Exception as e:
+            import traceback
+            error_msg = f"ARCHITECT_ERROR: {str(e)}\n{traceback.format_exc()}"
+            logger.error(error_msg)
             yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
         
         # End stream

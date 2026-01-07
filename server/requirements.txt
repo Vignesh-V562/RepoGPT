@@ -16,3 +16,4 @@ wikipedia
 pdfminer.six
 PyMuPDF
 fitz
+groq
