@@ -187,6 +187,7 @@ async def chat_analyze(request: AnalystRequest):
                     pool, planner_agent, request.query
                 )
             
+            yield f"data: {json.dumps({'type': 'status', 'content': f'Architect: Plan generated with {len(initial_plan_steps)} steps. Executing research...' })}\n\n"
             logger.info(f"ARCHITECT: Plan generated with {len(initial_plan_steps) if initial_plan_steps else 0} steps")
             if not initial_plan_steps:
                 raise ValueError("Planner failed to generate steps.")
@@ -195,7 +196,14 @@ async def chat_analyze(request: AnalystRequest):
             
             # Execute steps
             for i, plan_step_title in enumerate(initial_plan_steps):
-                yield f"data: {json.dumps({'type': 'status', 'content': f'Executing: {plan_step_title}'})}\n\n"
+                # Provide a more descriptive status update based on the step title
+                status_msg = f"Architect: {plan_step_title}"
+                if "research" in plan_step_title.lower():
+                    status_msg = f"🔍 Researching: {plan_step_title.split(':')[-1].strip() if ':' in plan_step_title else plan_step_title}"
+                elif "write" in plan_step_title.lower() or "draft" in plan_step_title.lower():
+                    status_msg = f"✍️ Writing: {plan_step_title.split(':')[-1].strip() if ':' in plan_step_title else plan_step_title}"
+                
+                yield f"data: {json.dumps({'type': 'status', 'content': status_msg})}\n\n"
                 
                 with ThreadPoolExecutor() as pool:
                     actual_step_description, agent_name, output = await loop.run_in_executor(

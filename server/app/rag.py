@@ -82,6 +82,37 @@ STANDALONE QUERY:"""
         return query
 
 
+def is_repo_query(query: str) -> bool:
+    """Determine if a query likely requires codebase context."""
+    # List of keywords that imply looking at code or repository structure
+    repo_keywords = [
+        "code", "file", "function", "class", "how dose", "where is", "repo", 
+        "implement", "logic", "variable", "import", "package", "method",
+        "blueprint", "architecture", "structure", "folder", "directory"
+    ]
+    query_lower = query.lower()
+    
+    # Check for direct repo keywords
+    if any(k in query_lower for k in repo_keywords):
+        return True
+    
+    # If the user is asking "what is this", "where does X happen", 
+    # or using technical terms like "auth", "db", "api"
+    tech_keywords = ["auth", "database", "db", "api", "endpoint", "route", "server", "client"]
+    if any(k in query_lower for k in tech_keywords):
+        return True
+        
+    return False
+
+async def _get_general_chat_response(query: str, history: list):
+    """Handle general questions without RAG."""
+    history_str = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in history])
+    prompt = f"You are RepoGPT assistant. Answer the following question based on your general knowledge. If the user is asking about code specifically, inform them that you are ready to analyze the repo if they provide more detail.\n\nHistory:\n{history_str}\n\nUser: {query}\n\nAssistant:"
+    
+    for chunk in llm.generate_content_stream(mode="chat", prompt=prompt):
+        yield {"type": "token", "content": chunk}
+
+
 async def query_repo(repo_id: str, query: str, session_id: str = None):
     """
     Production-grade RAG with:
@@ -97,8 +128,29 @@ async def query_repo(repo_id: str, query: str, session_id: str = None):
     history = []
     if session_id:
         history = await _fetch_history(session_id)
+        
+        # Check if history is relevant to the CURRENT repo
+        # If the session was started for Repo A but we are now in Repo B, 
+        # the history might be misleading.
+        if history and repo_id:
+            try:
+                session_info = supabase.table("chat_sessions").select("repository_id").eq("id", session_id).single().execute()
+                if session_info.data and session_info.data.get("repository_id") != repo_id:
+                    print(f"RAG: Detected repo mismatch (Session: {session_info.data.get('repository_id')}, Current: {repo_id}). Ignoring history for condensation.")
+                    history = []
+            except Exception as e:
+                print(f"RAG: Error checking session repo: {e}")
+
         if history:
             actual_search_query = await _condense_query(query, history)
+
+    # 0.1 Intent Detection: Skip RAG for non-technical or general conversational queries
+    if not is_repo_query(actual_search_query):
+        print(f"RAG: Skipping retrieval for general query: '{actual_search_query}'")
+        yield {"type": "status", "content": "General query detected. Responding via global knowledge..."}
+        async for chunk in _get_general_chat_response(query, history):
+            yield chunk
+        return
 
     # 1. Embed Query
     yield {"type": "status", "content": "Condensing query for context..."}
@@ -160,7 +212,7 @@ async def query_repo(repo_id: str, query: str, session_id: str = None):
             "query_text": actual_search_query,
             "keyword_weight": 0.3,
             "vector_weight": 0.7,
-            "match_count": 30,  # Get more for reranking
+            "match_count": 20,  # Reduced for faster processing
             "repo_id": repo_id
         }
         chunk_response = supabase.rpc("hybrid_search_chunks", hybrid_chunk_params).execute()
@@ -274,9 +326,13 @@ Now provide your expert analysis:
     # 7. Stream Response
     yield {"type": "status", "content": "Generating technical analysis..."}
     try:
-        # Use analyst mode for repository-wide deep understanding (Llama 70B)
+        # Optimization: Use 'chat' mode (8B) for faster replies to simple questions
+        # Use 'analyst' (70B) only for complex analytical queries
+        is_complex = len(code_context) > 5000 or "analyze" in query.lower() or "explain" in query.lower()
+        active_mode = "analyst" if is_complex else "chat"
+        
         for chunk in llm.generate_content_stream(
-            mode="analyst",
+            mode=active_mode,
             prompt=prompt
         ):
             yield {"type": "token", "content": chunk}

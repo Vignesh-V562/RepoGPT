@@ -15,6 +15,11 @@ logger = logging.getLogger(__name__)
 
 def clean_json_block(raw: str) -> str:
     raw = raw.strip()
+    # Handle LLM yapping before/after code blocks
+    match = re.search(r"(\{.*\}|\[.*\])", raw, re.DOTALL)
+    if match:
+        raw = match.group(0)
+    
     if raw.startswith("```"):
         raw = re.sub(r"^```[a-zA-Z]*\n?", "", raw)
         raw = re.sub(r"\n?```$", "", raw)
@@ -31,39 +36,47 @@ def planner_agent(topic: str) -> List[str]:
     with open(prompt_path, "r", encoding="utf-8") as f:
         prompt_template = f.read()
     
-    prompt = prompt_template.format(topic=topic)
+    prompt = prompt_template.replace("{topic}", str(topic))
 
     raw, _ = llm.generate_content(
         mode="architect",
         prompt=prompt
     )
     raw = raw.strip()
-    logger.info(f"PLANNER: Raw response from LLM: {raw[:200]}...")
+    logger.info(f"PLANNER: Raw response from LLM (length {len(raw)}): {raw[:500]}...")
 
     def _coerce_to_list(s: str) -> List[str]:
-        # ... (rest of function)
         s = s.strip()
+        # Handle cases where LLM returns JSON as a string inside a block
         if s.startswith("```"):
             s = re.sub(r"^```[a-zA-Z]*\n?", "", s)
             s = re.sub(r"\n?```$", "", s)
+        s = s.strip()
         
-        try:
-            obj = json.loads(s)
-            if isinstance(obj, list) and all(isinstance(x, str) for x in obj):
-                return obj
-        except:
-            pass
+        # 1. Try pure JSON/AST eval
+        for decoder in [json.loads, ast.literal_eval]:
+            try:
+                obj = decoder(s)
+                if isinstance(obj, list) and all(isinstance(x, str) for x in obj):
+                    return obj
+            except:
+                continue
             
-        try:
-            obj = ast.literal_eval(s)
-            if isinstance(obj, list) and all(isinstance(x, str) for x in obj):
-                return obj
-        except:
-            pass
-            
+        # 2. Try regex extraction of a list pattern []
+        list_match = re.search(r"\[.*\]", s, re.DOTALL)
+        if list_match:
+            try:
+                obj = ast.literal_eval(list_match.group(0))
+                if isinstance(obj, list) and all(isinstance(x, str) for x in obj):
+                    return obj
+            except:
+                pass
+
+        # 3. Fallback to line splitting
         if "\n" in s:
-            lines = [l.strip("-* 123456789. ") for l in s.split("\n") if l.strip()]
-            return [l for l in lines if len(l) > 10]
+            lines = [l.strip("-* 123456789. \r") for l in s.split("\n") if l.strip()]
+            # Filter for reasonably long descriptive lines
+            return [l for l in lines if len(l) > 15 and ":" in l]
             
         return []
 
@@ -105,7 +118,7 @@ def executor_agent_step(step_title: str, history: list, prompt: str):
     for i, (desc, agent, output) in enumerate(history):
         # We allow the very last step to be a bit longer if it's the draft we are currently editing
         is_last_step = (i == len(history) - 1)
-        limit = 4000 if is_last_step else 2000
+        limit = 3000 if is_last_step else 1500
         
         truncated_output = truncate_text(output.strip(), max_chars=limit)
         
@@ -135,13 +148,16 @@ def executor_agent_step(step_title: str, history: list, prompt: str):
             raw_output, _ = research_agent(prompt=enriched_task)
             
             try:
-                parsed = json.loads(raw_output)
+                # Use clean_json_block for more robust extraction
+                cleaned_output = clean_json_block(raw_output)
+                parsed = json.loads(cleaned_output)
                 content = parsed["content"]
                 import time
                 time.sleep(1) 
 
                 from src.agents import critique_agent
                 evaluation = critique_agent(goal=prompt, output=content)
+                logger.info(f"EXECUTOR: Critique for step '{step_title}': {evaluation.get('critique', 'unknown')}")
                 
                 if evaluation.get("critique") == "bad":
                     reason = evaluation.get('reason', 'Unknown reason')

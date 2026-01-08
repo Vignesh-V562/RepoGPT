@@ -30,8 +30,7 @@ def test_research_agent_json_structure():
     assert isinstance(data["tools_used"], list)
     assert len(data["content"]) > 100
 
-@pytest.mark.asyncio
-async def test_critique_flow():
+def test_critique_flow():
     """Test that the critique agent can evaluate output correctly."""
     from src.agents import critique_agent
     goal = "Find high-quality GitHub repos for a RAG system"

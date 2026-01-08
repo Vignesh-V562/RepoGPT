@@ -165,7 +165,7 @@ def arxiv_search_tool(
     _INCLUDE_PDF = True
     _EXTRACT_TEXT = True
     _MAX_PAGES = 6
-    _TEXT_CHARS = 2000
+    _TEXT_CHARS = 1500
     _SAVE_FULL_TEXT = False
     _SLEEP_SECONDS = 1.0
     # ==========================
@@ -308,7 +308,7 @@ def tavily_search_tool(
             results.append(
                 {
                     "title": r.get("title", ""),
-                    "content": r.get("content", "")[:2000] if r.get("content") else "",
+                    "content": r.get("content", "")[:1500] if r.get("content") else "",
                     "url": r.get("url", ""),
                 }
             )
@@ -427,7 +427,7 @@ def github_readme_tool(owner_repo: str) -> Dict:
         response.raise_for_status()
         content = response.text
         # Truncate to avoid token limits but keep enough for meaningful extraction
-        return {"owner_repo": owner_repo, "readme": content[:3000]}
+        return {"owner_repo": owner_repo, "readme": content[:2000]}
     except Exception as e:
         logger.error(f"GitHub README fetch failed for {owner_repo}: {e}")
         return {"error": f"Failed to fetch README for {owner_repo}: {str(e)}"}

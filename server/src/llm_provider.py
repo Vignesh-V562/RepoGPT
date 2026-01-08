@@ -224,6 +224,10 @@ class LLMProvider:
                 tools_used = []
                 if message.tool_calls:
                     logger.info(f"GROQ: Tool calls detected: {[t.function.name for t in message.tool_calls]}")
+                    
+                    # Add current assistant message once
+                    messages.append(message)
+                    
                     for tool_call in message.tool_calls:
                         tool_name = tool_call.function.name
                         tool_args = json.loads(tool_call.function.arguments)
@@ -232,8 +236,7 @@ class LLMProvider:
                         from src.research_tools import tool_mapping
                         if tool_name in tool_mapping:
                             tool_result = tool_mapping[tool_name](**tool_args)
-                            # Add to messages to get final response
-                            messages.append(message)
+                            # Add tool result message
                             messages.append({
                                 "role": "tool",
                                 "tool_call_id": tool_call.id,
@@ -262,7 +265,7 @@ class LLMProvider:
 
     def _is_retryable(self, e):
         err = str(e).lower()
-        return any(x in err for x in ["429", "rate limit", "overloaded", "503", "500", "resource_exhausted"])
+        return any(x in err for x in ["429", "rate limit", "overloaded", "503", "500", "resource_exhausted", "413", "request too large"])
 
 # Global instance
 llm = LLMProvider()

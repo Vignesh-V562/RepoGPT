@@ -12,7 +12,10 @@ def load_prompt(filename, **kwargs):
     with open(path, "r", encoding="utf-8") as f:
         template = f.read()
     if kwargs:
-        return template.format(**kwargs)
+        result = template
+        for k, v in kwargs.items():
+            result = result.replace("{" + k + "}", str(v))
+        return result
     return template
 from src.research_tools import (
     github_search_tool,
@@ -129,11 +132,23 @@ def critique_agent(goal: str, output: str):
             prompt=prompt,
             json_mode=True
         )
-        raw = content.strip()
+        # Robust extraction
+        match = re.search(r"\{.*\}", content, re.DOTALL)
+        if match:
+            raw = match.group(0)
+        else:
+            raw = content.strip()
+            
         if raw.startswith("```"):
              raw = re.sub(r"^```[a-zA-Z]*\n?", "", raw)
              raw = re.sub(r"\n?```$", "", raw)
-        return json.loads(raw)
+        
+        parsed = json.loads(raw)
+        return parsed
     except Exception as f:
         logger.error(f"Error in Critique Agent: {f}")
+        # If it failed to decode, try one last ditch regex for critique value
+        if "critique" in str(content).lower():
+            if "bad" in str(content).lower():
+                return {"critique": "bad", "reason": "Extracted 'bad' from malformed response"}
         return {"critique": "good", "reason": "System error in critic"}
