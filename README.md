@@ -3,6 +3,7 @@
 [![Next.js](https://img.shields.io/badge/Frontend-Next.js%2016-black?style=flat-square&logo=next.js)](https://nextjs.org/)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com/)
 [![Gemini](https://img.shields.io/badge/AI-Gemini%202.0%20Flash-blue?style=flat-square&logo=google-gemini)](https://deepmind.google/technologies/gemini/)
+[![Groq](https://img.shields.io/badge/AI-Groq%20Llama%203.3-orange?style=flat-square&logo=groq)](https://groq.com/)
 [![Supabase](https://img.shields.io/badge/Database-Supabase-3ECF8E?style=flat-square&logo=supabase)](https://supabase.com/)
 [![TailwindCSS](https://img.shields.io/badge/Styling-Tailwind%204-06B6D4?style=flat-square&logo=tailwindcss)](https://tailwindcss.com/)
 
@@ -13,14 +14,15 @@
 ## 🚀 Key Features
 
 - **🔍 Smart Repository Ingestion**: Clones and parses repositories using **Tree-sitter AST-based chunking** for high-precision code context.
-- **🧠 Hierarchical RAG Pipeline**: A dual-stage retrieval system that utilizes file-level summaries and granular code blocks for superior accuracy.
-- **🤖 Multi-Agent Research Swarm**: A sophisticated planning-executor architecture featuring:
-  - **Planner Agent**: Decomposes complex queries into actionable research steps.
-  - **Research Agent**: Utilizes tools like Tavily, ArXiv, and GitHub Search.
-  - **Writer & Editor Agents**: Drafts and refines comprehensive technical reports.
-  - **Critique Agent**: Validates output quality and ensures technical depth.
-- **⚡ Optimized for Gemini 2.0**: Grounded in Google's latest Gemini 2.0 Flash for lightning-fast reasoning and massive context windows.
-- **🎨 Modern UI/UX**: A sleek, responsive dashboard built with **Next.js 16**, **Tailwind CSS 4**, and **Framer Motion**.
+- **🧠 Intelligent RAG Pipeline**: A dual-stage retrieval system utilizing file-level summaries and granular code blocks. Now features **Intent Detection** for instant replies to general questions.
+- **🤖 Multi-Agent Research Swarm**: A sophisticated planning-executor architecture with:
+  - **Planner Agent**: Decomposes queries into actionable roadmaps.
+  - **Research Agent**: Utilizes Tavily, ArXiv, and GitHub Search tools.
+  - **Writer/Editor Agents**: Drafts professional technical blueprints.
+  - **Critique Agent**: Validates output quality via feedback loops.
+- **⚡ Multi-Model Intelligence**: Seamlessly switches between **Gemini 2.0 Flash** for massive context and **Groq (Llama 3.3/3.1)** for lightning-fast analysis.
+- **📡 Live Status Updates**: Real-time execution tracking in Architect mode—see exactly what the agents are doing (e.g., "🔍 Researching...", "✍️ Writing...").
+- **🎨 Modern UI/UX**: Sleek Next.js 16 dashboard with Tailwind 4 and Framer Motion.
 
 ---
 
@@ -71,11 +73,12 @@ graph LR
 
 ### Backend
 - **Framework**: FastAPI (Python 3.10+)
-- **AI Engine**: Google GenAI (Gemini 2.0 Flash)
+- **AI Engine**: Google GenAI (Gemini 2.0 Flash) & Groq (Llama 3.3)
 - **Orchestration**: Custom Multi-Agent Framework
-- **Tools**: Tavily, ArXiv, Wikipedia API, GitPython
+- **Tools**: Tavily, ArXiv, Wikipedia, GitHub API
+- **NLP**: Hybrid search (Vector + Keyword) + Cross-Encoder Reranking
 - **Database**: Supabase (PostgreSQL + pgvector)
-- **Parsing**: Tree-sitter (for AST-aware chunking)
+- **Parsing**: Tree-sitter (AST-aware chunking)
 
 ---
 

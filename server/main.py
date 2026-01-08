@@ -30,9 +30,12 @@ def is_greeting(query: str) -> bool:
 
 app = FastAPI(title="RepoGPT API", version="2.0.0")
 
+# Production CORS: Allow environment-defined origins + default local
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
