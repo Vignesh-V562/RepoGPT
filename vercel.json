@@ -1,26 +1,9 @@
 {
     "version": 2,
-    "builds": [
+    "rewrites": [
         {
-            "src": "client/package.json",
-            "use": "@vercel/next"
-        },
-        {
-            "src": "server/main.py",
-            "use": "@vercel/python",
-            "config": {
-                "runtime": "python3.10"
-            }
-        }
-    ],
-    "routes": [
-        {
-            "src": "/api/(.*)",
-            "dest": "server/main.py"
-        },
-        {
-            "src": "/(.*)",
-            "dest": "client/$1"
+            "source": "/api/:path*",
+            "destination": "https://repogpt-backend-v9dv.onrender.com/api/:path*"
         }
     ]
 }
