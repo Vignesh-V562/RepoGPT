@@ -20,6 +20,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
+global_pool = ThreadPoolExecutor(max_workers=10)
 
 # Ensure src is in python path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -185,10 +186,9 @@ async def chat_analyze(request: AnalystRequest):
             # Plan the workflow - Run in thread pool as it's a blocking LLM call
             logger.info("ARCHITECT: Calling planner_agent...")
             loop = asyncio.get_event_loop()
-            with ThreadPoolExecutor() as pool:
-                initial_plan_steps = await loop.run_in_executor(
-                    pool, planner_agent, request.query
-                )
+            initial_plan_steps = await loop.run_in_executor(
+                global_pool, planner_agent, request.query
+            )
             
             yield f"data: {json.dumps({'type': 'status', 'content': f'Architect: Plan generated with {len(initial_plan_steps)} steps. Executing research...' })}\n\n"
             logger.info(f"ARCHITECT: Plan generated with {len(initial_plan_steps) if initial_plan_steps else 0} steps")
@@ -208,10 +208,19 @@ async def chat_analyze(request: AnalystRequest):
                 
                 yield f"data: {json.dumps({'type': 'status', 'content': status_msg})}\n\n"
                 
-                with ThreadPoolExecutor() as pool:
-                    actual_step_description, agent_name, output = await loop.run_in_executor(
-                        pool, executor_agent_step, plan_step_title, execution_history, request.query
+                try:
+                    # Hard timeout of 120 seconds per research step to prevent hanging the whole request
+                    actual_step_description, agent_name, output = await asyncio.wait_for(
+                        loop.run_in_executor(
+                            global_pool, executor_agent_step, plan_step_title, execution_history, request.query
+                        ),
+                        timeout=120.0
                     )
+                except asyncio.TimeoutError:
+                    logger.error(f"ARCHITECT: Step '{plan_step_title}' timed out after 120s")
+                    agent_name = "system"
+                    output = f"Error: Research step '{plan_step_title}' timed out and was skipped to prevent hanging."
+                    actual_step_description = plan_step_title
                 
                 execution_history.append([plan_step_title, actual_step_description, output])
                 

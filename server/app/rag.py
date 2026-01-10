@@ -1,43 +1,16 @@
 import os
 from src.llm_provider import llm
-from fastembed import TextEmbedding
+from google import genai
 from app.supabase_client import supabase
 
-embedding_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
-
-# Try to load cross-encoder for reranking (Phase 2)
-try:
-    from sentence_transformers import CrossEncoder
-    reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2', max_length=512)
-    RERANKER_AVAILABLE = True
-    print("✓ Cross-encoder reranker loaded")
-except ImportError:
-    RERANKER_AVAILABLE = False
-    reranker = None
-    print("⚠ Cross-encoder not available. Install sentence-transformers for reranking.")
-
+client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY", ""))
 
 def rerank_chunks(query: str, chunks: list, top_k: int = 15) -> list:
     """
-    Rerank chunks using cross-encoder for better precision.
-    Returns chunks sorted by relevance score.
+    Rerank chunks for better precision.
+    (Local Cross-Encoder removed to save memory on Render).
     """
-    if not RERANKER_AVAILABLE or not chunks:
-        return chunks[:top_k]
-    
-    try:
-        pairs = [(query, c.get('content', '')[:2000]) for c in chunks]  # Truncate for speed
-        scores = reranker.predict(pairs)
-        
-        # Attach scores and sort
-        for i, chunk in enumerate(chunks):
-            chunk['rerank_score'] = float(scores[i])
-        
-        chunks.sort(key=lambda x: x.get('rerank_score', 0), reverse=True)
-        return chunks[:top_k]
-    except Exception as e:
-        print(f"Reranking error: {e}")
-        return chunks[:top_k]
+    return chunks[:top_k]
 
 
 async def _fetch_history(session_id: str, limit: int = 5):
@@ -154,7 +127,12 @@ async def query_repo(repo_id: str, query: str, session_id: str = None):
 
     # 1. Embed Query
     yield {"type": "status", "content": "Condensing query for context..."}
-    query_vec = list(embedding_model.embed([actual_search_query]))[0].tolist()
+    response = client.models.embed_content(
+        model="text-embedding-004",
+        contents=actual_search_query,
+        config={'output_dimensionality': 384}
+    )
+    query_vec = response.embeddings[0].values
 
     # 2. Stage 1: Find Relevant Files via Summary Search
     yield {"type": "status", "content": "Identifying relevant files..."}

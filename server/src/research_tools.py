@@ -11,6 +11,15 @@ session.headers.update(
     {"User-Agent": "LF-ADP-Agent/1.0 (mailto:your.email@example.com)"}
 )
 
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from requests.exceptions import HTTPError, Timeout, ConnectionError
+
+def is_retryable_exception(exception):
+    if isinstance(exception, HTTPError):
+        # Retry on 500, 502, 503, 504 and 429
+        return exception.response.status_code in [429, 500, 502, 503, 504]
+    return isinstance(exception, (Timeout, ConnectionError))
+
 ## -----
 
 from typing import List, Dict, Optional
@@ -278,6 +287,12 @@ from tavily import TavilyClient
 load_dotenv()  # Loads environment variables from a .env file
 
 
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type(Exception), # Tavily client might raise various exceptions
+    reraise=True
+)
 def tavily_search_tool(
     query: str, max_results: int = 5, include_images: bool = False
 ) -> list[dict]:
@@ -369,7 +384,15 @@ def wikipedia_search_tool(query: str, sentences: int = 5) -> List[Dict]:
         List[Dict]: A list with a single dictionary containing title, summary, and URL.
     """
     try:
-        page_title = wikipedia.search(query)[0]
+        # wikipedia library doesn't support timeout directly in all versions, 
+        # so we rely on the fact that most tools here use requests and we want to be safe.
+        # However, for pure requests calls, we definitely add them.
+        import wikipedia
+        search_results = wikipedia.search(query)
+        if not search_results:
+            return [{"error": "No Wikipedia results found"}]
+        
+        page_title = search_results[0]
         page = wikipedia.page(page_title)
         summary = wikipedia.summary(page_title, sentences=sentences)
 
@@ -379,23 +402,48 @@ def wikipedia_search_tool(query: str, sentences: int = 5) -> List[Dict]:
 
 
 
+wikipedia_tool_def = {
+    "type": "function",
+    "function": {
+        "name": "wikipedia_search_tool",
+        "description": "Searches Wikipedia for a summary of the given query.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query for Wikipedia."},
+                "sentences": {"type": "integer", "description": "Number of sentences to include in the summary.", "default": 5},
+            },
+            "required": ["query"],
+        },
+    },
+}
+
+
+
 def github_search_tool(query: str, max_results: int = 5) -> List[Dict]:
     """
     Searches GitHub for repositories matching the query.
     Returns details like name, url, stars, description, and primary language.
     """
-    api_url = f"https://api.github.com/search/repositories?q={query}&sort=stars&order=desc&per_page={max_results}"
-    headers = {"Accept": "application/vnd.github.v3+json"}
-    token = os.getenv("GITHUB_TOKEN")
-    if token:
-        headers["Authorization"] = f"token {token}"
-        logger.info("Using GITHUB_TOKEN for authenticated search.")
-    
-    try:
-        response = requests.get(api_url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((HTTPError, Timeout, ConnectionError)),
+        reraise=True
+    )
+    def _do_search():
+        api_url = f"https://api.github.com/search/repositories?q={query}&sort=stars&order=desc&per_page={max_results}"
+        headers = {"Accept": "application/vnd.github.v3+json"}
+        token = os.getenv("GITHUB_TOKEN")
+        if token:
+            headers["Authorization"] = f"token {token}"
         
+        response = requests.get(api_url, headers=headers, timeout=30)
+        response.raise_for_status()
+        return response.json()
+        
+    try:
+        data = _do_search()
         results = []
         for item in data.get("items", []):
             results.append({
@@ -408,7 +456,7 @@ def github_search_tool(query: str, max_results: int = 5) -> List[Dict]:
             })
         return results
     except Exception as e:
-        logger.error(f"GitHub API failed: {e}")
+        logger.error(f"GitHub API failed after retries: {e}")
         return [{"error": f"GitHub API failed: {str(e)}"}]
 
 
@@ -416,16 +464,25 @@ def github_readme_tool(owner_repo: str) -> Dict:
     """
     Fetches the README content for a given GitHub repository (e.g., 'owner/repo').
     """
-    api_url = f"https://api.github.com/repos/{owner_repo}/readme"
-    headers = {"Accept": "application/vnd.github.v3.raw"}
-    token = os.getenv("GITHUB_TOKEN")
-    if token:
-        headers["Authorization"] = f"token {token}"
-    
-    try:
-        response = requests.get(api_url, headers=headers)
+    @retry(
+        stop=stop_after_attempt(2),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((HTTPError, Timeout, ConnectionError)),
+        reraise=True
+    )
+    def _do_fetch():
+        api_url = f"https://api.github.com/repos/{owner_repo}/readme"
+        headers = {"Accept": "application/vnd.github.v3.raw"}
+        token = os.getenv("GITHUB_TOKEN")
+        if token:
+            headers["Authorization"] = f"token {token}"
+        
+        response = requests.get(api_url, headers=headers, timeout=30)
         response.raise_for_status()
-        content = response.text
+        return response.text
+
+    try:
+        content = _do_fetch()
         # Truncate to avoid token limits but keep enough for meaningful extraction
         return {"owner_repo": owner_repo, "readme": content[:2000]}
     except Exception as e:

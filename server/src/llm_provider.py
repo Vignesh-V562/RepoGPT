@@ -8,6 +8,7 @@ from google import genai
 from google.genai import types
 from groq import Groq
 import re
+from src.research_tools import arxiv_tool_def, tavily_tool_def, github_tool_def, github_readme_tool_def, wikipedia_tool_def, tool_mapping
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,10 @@ class LLMProvider:
             google_key = os.environ.get("GOOGLE_API_KEY")
             if google_key:
                 try:
-                    self.google_client = genai.Client(api_key=google_key)
+                    self.google_client = genai.Client(
+                        api_key=google_key,
+                        http_options={'timeout': 60000} # 60 seconds
+                    )
                     logger.info("Google GenAI client initialized.")
                 except Exception as e:
                     logger.error(f"Failed to init Google client: {e}")
@@ -152,7 +156,7 @@ class LLMProvider:
                 response = self.google_client.models.generate_content(
                     model=model_id,
                     contents=prompt,
-                    config=types.GenerateContentConfig(**config_params)
+                    config=types.GenerateContentConfig(**config_params),
                 )
                 
                 # Extract tools used
@@ -185,13 +189,13 @@ class LLMProvider:
         # Convert tools to Groq format (OpenAI format)
         groq_tools = None
         if tools:
-            from src.research_tools import arxiv_tool_def, tavily_tool_def, github_tool_def, github_readme_tool_def, tool_mapping
             # Map tools to their definitions
             groq_tools = []
             tool_name_map = {
                 "arxiv_search_tool": arxiv_tool_def,
                 "tavily_search_tool": tavily_tool_def,
                 "github_search_tool": github_tool_def,
+                "wikipedia_search_tool": wikipedia_tool_def,
                 "github_readme_tool": github_readme_tool_def
             }
             
@@ -215,7 +219,7 @@ class LLMProvider:
                     params["tools"] = groq_tools
                     params["tool_choice"] = "auto"
 
-                response = self.groq_client.chat.completions.create(**params)
+                response = self.groq_client.chat.completions.create(**params, timeout=60.0)
                 message = response.choices[0].message
                 content = message.content or ""
                 
@@ -233,7 +237,6 @@ class LLMProvider:
                         tool_args = json.loads(tool_call.function.arguments)
                         
                         # Execute tool immediately if it's in tool_mapping to match "automatic_function_calling"
-                        from src.research_tools import tool_mapping
                         if tool_name in tool_mapping:
                             tool_result = tool_mapping[tool_name](**tool_args)
                             # Add tool result message

@@ -8,13 +8,12 @@ import stat
 import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from fastembed import TextEmbedding
 from google import genai
 from app.supabase_client import supabase
 
 # Configure Gemini for file summarization
 client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY", ""))
-MODEL_NAME = os.environ.get("LLM_MODEL_NAME", "gemini-2.5-flash-lite")
+MODEL_NAME = os.environ.get("LLM_MODEL_NAME", "gemini-2.0-flash-lite")
 
 # Local storage for repos (temporary)
 REPO_STORAGE_PATH = "./cloned_repos"
@@ -30,7 +29,7 @@ def on_rm_error(func, path, exc_info):
 
 class RepoIngestionService:
     def __init__(self):
-        self.embedding_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
+        self.client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY", ""))
         self.thread_pool = ThreadPoolExecutor(max_workers=2)
     
     async def ingest_repo(self, repo_url: str, user_id: str, repo_entry_id: str):
@@ -361,11 +360,17 @@ Be specific. For example: "Handles user authentication and session management."
         for i in range(0, total_docs, batch_size):
             batch = documents[i:i+batch_size]
             texts = [doc["content"] for doc in batch]
-            embeddings = list(self.embedding_model.embed(texts))
+            
+            response = self.client.models.embed_content(
+                model="text-embedding-004",
+                contents=texts,
+                config={'output_dimensionality': 384}
+            )
+            embeddings = [e.values for e in response.embeddings]
             
             rows_to_insert = []
             for j, doc in enumerate(batch):
-                doc["embedding"] = embeddings[j].tolist()
+                doc["embedding"] = embeddings[j]
                 rows_to_insert.append(doc)
             
             supabase.table("code_chunks").insert(rows_to_insert).execute()
@@ -382,11 +387,17 @@ Be specific. For example: "Handles user authentication and session management."
             batch = file_summaries[i:i+batch_size]
             # Embed the summary + key components together for better retrieval
             texts = [f"{s['summary']} Components: {', '.join(s.get('key_components', []))}" for s in batch]
-            embeddings = list(self.embedding_model.embed(texts))
+            
+            response = self.client.models.embed_content(
+                model="text-embedding-004",
+                contents=texts,
+                config={'output_dimensionality': 384}
+            )
+            embeddings = [e.values for e in response.embeddings]
             
             rows_to_insert = []
             for j, summary in enumerate(batch):
-                summary["embedding"] = embeddings[j].tolist()
+                summary["embedding"] = embeddings[j]
                 rows_to_insert.append(summary)
             
             try:

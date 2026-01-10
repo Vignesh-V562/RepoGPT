@@ -1,7 +1,6 @@
 fastapi
 uvicorn
 supabase
-fastembed
 google-genai
 gitpython
 python-dotenv
@@ -9,7 +8,6 @@ prisma
 pydantic
 tree-sitter>=0.21.0
 tree-sitter-language-pack>=0.1.0
-sentence-transformers>=2.2.0
 aisuite
 tavily-python
 wikipedia
@@ -17,3 +15,4 @@ pdfminer.six
 PyMuPDF
 fitz
 groq
+tenacity
