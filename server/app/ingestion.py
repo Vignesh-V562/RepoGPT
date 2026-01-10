@@ -8,12 +8,8 @@ import stat
 import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from google import genai
 from app.supabase_client import supabase
-
-# Configure Gemini for file summarization
-client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY", ""))
-MODEL_NAME = os.environ.get("LLM_MODEL_NAME", "gemini-2.0-flash-lite")
+from src.llm_provider import llm
 
 # Local storage for repos (temporary)
 REPO_STORAGE_PATH = "./cloned_repos"
@@ -29,7 +25,6 @@ def on_rm_error(func, path, exc_info):
 
 class RepoIngestionService:
     def __init__(self):
-        self.client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY", ""))
         self.thread_pool = ThreadPoolExecutor(max_workers=2)
     
     async def ingest_repo(self, repo_url: str, user_id: str, repo_entry_id: str):
@@ -265,11 +260,10 @@ COMPONENTS: [component1], [component2], [component3]
 
 Be specific. For example: "Handles user authentication and session management."
 """
-            response = client.models.generate_content(
-                model=MODEL_NAME,
-                contents=prompt
+            response_text, _ = llm.generate_content(
+                mode="analyst",
+                prompt=prompt
             )
-            response_text = response.text
             
             # Parse response
             summary = ""
@@ -361,7 +355,7 @@ Be specific. For example: "Handles user authentication and session management."
             batch = documents[i:i+batch_size]
             texts = [doc["content"] for doc in batch]
             
-            response = self.client.models.embed_content(
+            response = llm.google_client.models.embed_content(
                 model="text-embedding-004",
                 contents=texts,
                 config={'output_dimensionality': 384}
@@ -388,7 +382,7 @@ Be specific. For example: "Handles user authentication and session management."
             # Embed the summary + key components together for better retrieval
             texts = [f"{s['summary']} Components: {', '.join(s.get('key_components', []))}" for s in batch]
             
-            response = self.client.models.embed_content(
+            response = llm.google_client.models.embed_content(
                 model="text-embedding-004",
                 contents=texts,
                 config={'output_dimensionality': 384}

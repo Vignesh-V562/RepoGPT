@@ -13,6 +13,5 @@ tavily-python
 wikipedia
 pdfminer.six
 PyMuPDF
-fitz
 groq
 tenacity

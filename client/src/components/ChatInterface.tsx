@@ -6,6 +6,7 @@ import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { motion, AnimatePresence } from 'framer-motion';
+import remarkGfm from 'remark-gfm';
 import Modal from './Modal';
 
 interface Message {
@@ -442,6 +443,7 @@ const MessageBubble = ({ message, mode }: { message: Message, mode: string }) =>
 
                 <div className={`text-sm leading-relaxed ${!isUser ? 'text-gray-300' : ''}`}>
                     <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
                         components={{
                             code({ node, inline, className, children, ...props }: any) {
                                 const match = /language-(\w+)/.exec(className || '');

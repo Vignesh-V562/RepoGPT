@@ -17,7 +17,7 @@ You are an advanced technical researcher. Your goal is to:
 - Provide specific **GitHub Repo Links** for every cited idea.
 - Prepare the ground for the Writer Agent by categorizing these findings.
 
-- **BE CONCISE**: Focus on high-level architecture and key features. Avoid dumping large amounts of text. Summarize findings.
+- **BE THOROUGH**: Dig deep into the technical implementation details. Find config files, structural patterns, and specific API choices. Avoid high-level marketing summaries.
 
 Today is {date}.
 

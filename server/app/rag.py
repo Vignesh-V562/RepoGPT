@@ -56,22 +56,26 @@ STANDALONE QUERY:"""
 
 
 def is_repo_query(query: str) -> bool:
-    """Determine if a query likely requires codebase context."""
+    """Determine if a query likely requires codebase context. Loosened for better recall."""
     # List of keywords that imply looking at code or repository structure
     repo_keywords = [
-        "code", "file", "function", "class", "how dose", "where is", "repo", 
+        "code", "file", "function", "class", "how", "where", "repo", 
         "implement", "logic", "variable", "import", "package", "method",
-        "blueprint", "architecture", "structure", "folder", "directory"
+        "blueprint", "architecture", "structure", "folder", "directory",
+        "tech stack", "stack", "framework", "library", "used in", "built with"
     ]
     query_lower = query.lower()
     
+    # If the query is very short but technical, assume repo query
+    if len(query_lower.split()) < 4 and any(k in query_lower for k in ["what", "how", "where", "who"]):
+        return True
+
     # Check for direct repo keywords
     if any(k in query_lower for k in repo_keywords):
         return True
     
-    # If the user is asking "what is this", "where does X happen", 
-    # or using technical terms like "auth", "db", "api"
-    tech_keywords = ["auth", "database", "db", "api", "endpoint", "route", "server", "client"]
+    # Technical terms
+    tech_keywords = ["auth", "database", "db", "api", "endpoint", "route", "server", "client", "frontend", "backend"]
     if any(k in query_lower for k in tech_keywords):
         return True
         
@@ -146,7 +150,7 @@ async def query_repo(repo_id: str, query: str, session_id: str = None):
             "query_text": actual_search_query,
             "keyword_weight": 0.3,
             "vector_weight": 0.7,
-            "match_count": 15,
+            "match_count": 25,
             "repo_id": repo_id
         }
         file_response = supabase.rpc("hybrid_search_file_summaries", hybrid_params).execute()
@@ -240,7 +244,7 @@ async def query_repo(repo_id: str, query: str, session_id: str = None):
     
     if not chunks and not file_summaries_context:
         print("RAG: No chunks and no file summaries context found. Strict refusal triggered.")
-        yield {"type": "token", "content": "❌ **No relevant code or documentation was found in the repository for this query.**\n\nTo ensure accuracy and avoid hallucinations, I only answer based on the provided codebase context. Please try rephrasing your search or checking if the specific file is indexed."}
+        yield {"type": "token", "content": "❌ **I could not find any relevant code or documentation in this repository to answer your question.**\n\nI am restricted to analyzing the provided codebase. If you believe this is an error, please ensure the repository is fully indexed or try a more specific query."}
         return
 
     # 4. Rerank chunks for precision (Phase 2)
@@ -291,14 +295,13 @@ Your mission: Provide accurate and technically deep answers about this codebase.
 3. **Mandatory Citations**: Every claim about the code MUST be accompanied by a file path or function name from the context.
 4. **Be Specific**: Reference exact class names, function names, and file paths.
 5. **Use Code Examples**: Quote relevant snippets from the provided context when explaining.
+6. **No Hallucinations**: If you see a file like `package.json`, read its content strictly. Do not guess versions (e.g., do not say "Next.js 16" unless you see "16" in the provided text).
 
-## Format
-- Use headers (##, ###) to organize your response
-- Use bullet points for lists
-- Use `inline code` for identifiers
-- Use code blocks for longer excerpts
-
-Now provide your expert analysis:
+Now provide your expert analysis based ONLY on the context below:
+<CONTEXT>
+{file_summaries_context if file_summaries_context else "File summaries not available."}
+{code_context if code_context else "No specific code chunks found."}
+</CONTEXT>
 """
 
     # 7. Stream Response

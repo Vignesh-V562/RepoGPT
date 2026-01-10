@@ -34,7 +34,7 @@ create table chat_sessions (
   user_id uuid references auth.users not null,
   title text, -- Auto-generated from first message
   mode text default 'repo_gpt', -- 'architect' or 'repo_gpt'
-  repository_id uuid references repositories, -- Optional, only if in Repo Mode
+  repository_id uuid references repositories on delete cascade, -- Optional, only if in Repo Mode
   created_at timestamp with time zone default timezone('utc'::text, now())
 );
 

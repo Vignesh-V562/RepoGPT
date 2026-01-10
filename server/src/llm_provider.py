@@ -253,7 +253,8 @@ class LLMProvider:
                         logger.info("GROQ: Sending tool results back to model for final response...")
                         final_response = self.groq_client.chat.completions.create(
                             model=model_id,
-                            messages=messages
+                            messages=messages,
+                            timeout=60.0
                         )
                         content = final_response.choices[0].message.content or ""
                         logger.info("GROQ: Final response received.")

@@ -13,7 +13,11 @@ Analyze if the research provided is deep enough for a "Project Blueprint".
 - Is there a clear technical path for the implementation?
 
 **Standards for "good":**
-If the research identifies a viable tech stack and at least 2-3 high-quality reference repositories with descriptions, it is SUFFICIENT. Do not be overly pedantic about minor missing details; the "Writer Agent" will fill in implementation specifics. Mark as "good" if it provides a solid foundation for building.
+If the research identifies a specific tech stack (with non-hallucinated names) and at least 2-3 high-quality reference repositories with descriptions AND specific technical links, it is SUFFICIENT. 
+Mark as "bad" if:
+- It only contains generic high-level descriptions.
+- It fails to provide specific repo URLs.
+- It hallucinates library versions.
 
 ## OUTPUT FORMAT:
 You MUST answer ONLY with a valid JSON object:

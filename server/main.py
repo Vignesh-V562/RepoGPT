@@ -19,6 +19,13 @@ import logging
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
+# Configure logging FIRST
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    stream=sys.stdout
+)
+
 logger = logging.getLogger(__name__)
 global_pool = ThreadPoolExecutor(max_workers=10)
 
@@ -209,15 +216,15 @@ async def chat_analyze(request: AnalystRequest):
                 yield f"data: {json.dumps({'type': 'status', 'content': status_msg})}\n\n"
                 
                 try:
-                    # Hard timeout of 120 seconds per research step to prevent hanging the whole request
+                    # Hard timeout of 240 seconds per research step to prevent hanging the whole request
                     actual_step_description, agent_name, output = await asyncio.wait_for(
                         loop.run_in_executor(
                             global_pool, executor_agent_step, plan_step_title, execution_history, request.query
                         ),
-                        timeout=120.0
+                        timeout=240.0
                     )
                 except asyncio.TimeoutError:
-                    logger.error(f"ARCHITECT: Step '{plan_step_title}' timed out after 120s")
+                    logger.error(f"ARCHITECT: Step '{plan_step_title}' timed out after 240s")
                     agent_name = "system"
                     output = f"Error: Research step '{plan_step_title}' timed out and was skipped to prevent hanging."
                     actual_step_description = plan_step_title
@@ -247,7 +254,7 @@ async def chat_analyze(request: AnalystRequest):
                     "content": full_response
                 }).execute()
             except Exception as e:
-                logger.error(f"Failed to save final AI report: {e}")
+                logger.error(f"Failed to save final AI report (likely session was deleted): {e}")
             
         except Exception as e:
             import traceback
