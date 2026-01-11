@@ -251,6 +251,7 @@ async def query_repo(repo_id: str, query: str, session_id: str = None):
     if chunks:
         yield {"type": "status", "content": "Reranking candidates for precision..."}
         chunks = rerank_chunks(actual_search_query, chunks, top_k=15)
+
     
     # 5. Build Code Context with metadata
     code_context = ""

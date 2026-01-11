@@ -12,7 +12,9 @@ from app.supabase_client import supabase
 from src.llm_provider import llm
 
 # Local storage for repos (temporary)
+# Local storage for repos (temporary)
 REPO_STORAGE_PATH = "./cloned_repos"
+
 
 def on_rm_error(func, path, exc_info):
     """
@@ -26,6 +28,7 @@ def on_rm_error(func, path, exc_info):
 class RepoIngestionService:
     def __init__(self):
         self.thread_pool = ThreadPoolExecutor(max_workers=2)
+
     
     async def ingest_repo(self, repo_url: str, user_id: str, repo_entry_id: str):
         """

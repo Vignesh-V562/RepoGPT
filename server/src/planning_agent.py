@@ -119,6 +119,7 @@ def executor_agent_step(step_title: str, history: list, prompt: str):
         # We allow the very last step to be a bit longer if it's the draft we are currently editing
         is_last_step = (i == len(history) - 1)
         limit = 3000 if is_last_step else 1500
+
         
         truncated_output = truncate_text(output.strip(), max_chars=limit)
         
