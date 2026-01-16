@@ -150,7 +150,7 @@ async def query_repo(repo_id: str, query: str, session_id: str = None):
             "query_text": actual_search_query,
             "keyword_weight": 0.3,
             "vector_weight": 0.7,
-            "match_count": 25,
+            "match_count": 8,
             "repo_id": repo_id
         }
         file_response = supabase.rpc("hybrid_search_file_summaries", hybrid_params).execute()
@@ -194,7 +194,7 @@ async def query_repo(repo_id: str, query: str, session_id: str = None):
             "query_text": actual_search_query,
             "keyword_weight": 0.3,
             "vector_weight": 0.7,
-            "match_count": 20,  # Reduced for faster processing
+            "match_count": 8,
             "repo_id": repo_id
         }
         chunk_response = supabase.rpc("hybrid_search_chunks", hybrid_chunk_params).execute()
@@ -250,7 +250,8 @@ async def query_repo(repo_id: str, query: str, session_id: str = None):
     # 4. Rerank chunks for precision (Phase 2)
     if chunks:
         yield {"type": "status", "content": "Reranking candidates for precision..."}
-        chunks = rerank_chunks(actual_search_query, chunks, top_k=15)
+        chunks = rerank_chunks(actual_search_query, chunks, top_k=5)
+
 
     
     # 5. Build Code Context with metadata

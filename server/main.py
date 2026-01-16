@@ -34,150 +34,56 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 def is_greeting(query: str) -> bool:
     greetings = ["hi", "hello", "hey", "hola", "greetings", "hi there", "hello there"]
-    return query.lower().strip().strip('?!.') in greetings
+    clean_query = query.lower().strip().strip('?!.')
+    # Only match if the query is EXACTLY a greeting, not if it contains technical keywords
+    if clean_query in greetings:
+        technical_keywords = ["plan", "build", "architecture", "setup", "how to", "create", "implement"]
+        if any(keyword in clean_query for keyword in technical_keywords):
+            return False
+        return True
+    return False
 
 app = FastAPI(title="RepoGPT API", version="2.0.0")
-
-# Production CORS: Allow environment-defined origins + default local
-allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-@app.get("/")
-def root():
-    return {"message": "RepoGPT API is running"}
-
-@app.post("/api/repo/ingest")
-async def ingest_repo(request: IngestRequest, background_tasks: BackgroundTasks):
-    # 1. Create Repository Record (if not exists)
-    try:
-        existing = supabase.table("repositories").select("*").eq("url", request.repoUrl).eq("user_id", request.userId).execute()
-        if existing.data:
-            repo_id = existing.data[0]['id']
-            if existing.data[0]['status'] == 'ready':
-                return {"message": "Repo already indexed", "repoId": repo_id}
-        else:
-            # Create new
-            res = supabase.table("repositories").insert({
-                "url": request.repoUrl,
-                "user_id": request.userId,
-                "name": request.repoUrl.split("/")[-1],
-                "status": "pending"
-            }).execute()
-            repo_id = res.data[0]['id']
-
-        # 2. Trigger Background Task
-        background_tasks.add_task(repo_ingestion_service.ingest_repo, request.repoUrl, request.userId, repo_id)
-        
-        return {"message": "Ingestion started", "repoId": repo_id}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/chat/stream")
-async def chat_stream(request: RepoChatRequest):
-    # 1. Verify Session or Create One
-    session_id = request.sessionId
-    if not session_id:
-        # Create new session
-        res = supabase.table("chat_sessions").insert({
-            "user_id": request.userId,
-            "title": request.query[:30],
-            "repository_id": request.repoId
-        }).execute()
-        session_id = res.data[0]['id']
-
-    # 2. Save User Message
-    supabase.table("messages").insert({
-        "session_id": session_id,
-        "role": "user",
-        "content": request.query
-    }).execute()
-
-    # 3. Stream Response (SSE Format)
-    async def event_generator():
-        import json
-        full_response = ""
-        
-        # Send Session ID
-        yield f"data: {json.dumps({'type': 'session', 'sessionId': session_id})}\n\n"
-        
-        # Check for greeting
-        if is_greeting(request.query):
-            response = "Hello! I am RepoGPT, your AI codebase analyst. How can I help you today?"
-            yield f"data: {json.dumps({'type': 'token', 'content': response})}\n\n"
-            # Save AI Message
-            supabase.table("messages").insert({
-                "session_id": session_id,
-                "role": "ai",
-                "content": response
-            }).execute()
-            yield "data: [DONE]\n\n"
-            return
-
-        async for event in query_repo(request.repoId, request.query, request.sessionId):
-            if isinstance(event, dict):
-                if event["type"] == "token":
-                    full_response += event["content"]
-                yield f"data: {json.dumps(event)}\n\n"
-            else:
-                # Fallback for unexpected string yields
-                full_response += str(event)
-                yield f"data: {json.dumps({'type': 'token', 'content': str(event)})}\n\n"
-
-        # 4. Save AI Message
-        supabase.table("messages").insert({
-            "session_id": session_id,
-            "role": "ai",
-            "content": full_response
-        }).execute()
-        
-        # End stream
-        yield "data: [DONE]\n\n"
-
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
-
+# ... (lines 38-153)
 @app.post("/api/chat/analyze")
-async def chat_analyze(request: AnalystRequest):
-    # 1. Verify Session or Create One
-    session_id = request.sessionId
-    if not session_id:
-        res = supabase.table("chat_sessions").insert({
-            "user_id": request.userId,
-            "title": f"Research: {request.query[:30]}",
-            "repository_id": None # No specific repo for initial research
-        }).execute()
-        session_id = res.data[0]['id']
+async def chat_analyze(request: RepoChatRequest):
+    print(f"--- DEBUG: RECEIVED ANALYZE REQUEST: {request.query[:50]} ---")
+    logger.info(f"RECEIVED ANALYZE REQUEST: {request.query[:50]}...")
 
-    # 2. Save User Message
-    try:
-        supabase.table("messages").insert({
-            "session_id": session_id,
-            "role": "user",
-            "content": request.query
-        }).execute()
-    except Exception as e:
-        logger.error(f"Failed to save user message: {e}")
-
-    # 3. Stream Response (SSE Format)
     async def event_generator():
         import json
         full_response = ""
         execution_history = []
-        logger.info(f"ARCHITECT: Starting response stream for session {session_id}")
-        # Send Session ID
-        yield f"data: {json.dumps({'type': 'session', 'sessionId': session_id})}\n\n"
         
-        # Check for greeting
+        # Send Immediate Awake Signal
+        yield f"data: {json.dumps({'type': 'status', 'content': 'Architect: Initializing session...'})}\n\n"
+        
+        session_id = request.sessionId
+        try:
+            if not session_id:
+                res = supabase.table("chat_sessions").insert({
+                    "user_id": request.userId,
+                    "title": f"Research: {request.query[:30]}",
+                    "repository_id": None
+                }).execute()
+                session_id = res.data[0]['id']
+            
+            yield f"data: {json.dumps({'type': 'session', 'sessionId': session_id})}\n\n"
+
+            supabase.table("messages").insert({
+                "session_id": session_id,
+                "role": "user",
+                "content": request.query
+            }).execute()
+        except Exception as e:
+            logger.error(f"Error in chat_analyze initialization: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'content': f'Initialization Error: {str(e)}'})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
         if is_greeting(request.query):
             response = "Hello! I am RepoGPT Architect. I can help you research architecture patterns and plan your next big project. What are we building?"
             yield f"data: {json.dumps({'type': 'token', 'content': response})}\n\n"
-            # Save AI Message
             supabase.table("messages").insert({
                 "session_id": session_id,
                 "role": "ai",
@@ -186,27 +92,23 @@ async def chat_analyze(request: AnalystRequest):
             yield "data: [DONE]\n\n"
             return
 
-        logger.info(f"ARCHITECT: Processing non-greeting query: {request.query[:50]}...")
+        logger.info(f"ARCHITECT: Processing query: {request.query[:50]}...")
         yield f"data: {json.dumps({'type': 'status', 'content': 'Planning research strategy...'})}\n\n"
         
         try:
-            # Plan the workflow - Run in thread pool as it's a blocking LLM call
-            logger.info("ARCHITECT: Calling planner_agent...")
             loop = asyncio.get_event_loop()
             initial_plan_steps = await loop.run_in_executor(
                 global_pool, planner_agent, request.query
             )
             
-            yield f"data: {json.dumps({'type': 'status', 'content': f'Architect: Plan generated with {len(initial_plan_steps)} steps. Executing research...' })}\n\n"
             logger.info(f"ARCHITECT: Plan generated with {len(initial_plan_steps) if initial_plan_steps else 0} steps")
             if not initial_plan_steps:
                 raise ValueError("Planner failed to generate steps.")
                 
             yield f"data: {json.dumps({'type': 'plan', 'steps': initial_plan_steps})}\n\n"
-            
+            yield f"data: {json.dumps({'type': 'status', 'content': f'Architect: Plan generated. Executing {len(initial_plan_steps)} research steps...' })}\n\n"
             # Execute steps
             for i, plan_step_title in enumerate(initial_plan_steps):
-                # Provide a more descriptive status update based on the step title
                 status_msg = f"Architect: {plan_step_title}"
                 if "research" in plan_step_title.lower():
                     status_msg = f"🔍 Researching: {plan_step_title.split(':')[-1].strip() if ':' in plan_step_title else plan_step_title}"
@@ -216,37 +118,60 @@ async def chat_analyze(request: AnalystRequest):
                 yield f"data: {json.dumps({'type': 'status', 'content': status_msg})}\n\n"
                 
                 try:
-                    # Hard timeout of 240 seconds per research step to prevent hanging the whole request
-                    actual_step_description, agent_name, output = await asyncio.wait_for(
-                        loop.run_in_executor(
-                            global_pool, executor_agent_step, plan_step_title, execution_history, request.query
-                        ),
-                        timeout=240.0
+                    # HEARTBEAT IMPLEMENTATION
+                    # Instead of a simple await, we'll run the task and yield 'ping' events every 15s
+                    # We wrap it in a future to use with asyncio
+                    future = loop.run_in_executor(
+                        global_pool, executor_agent_step, plan_step_title, execution_history, request.query
                     )
-                except asyncio.TimeoutError:
-                    logger.error(f"ARCHITECT: Step '{plan_step_title}' timed out after 240s")
+                    
+                    actual_step_description = plan_step_title
+                    agent_name = "unknown"
+                    output = "No output produced."
+
+                    while not future.done():
+                        try:
+                            # Wait for 15 seconds for the task to complete
+                            # Use asyncio.wait to avoid consuming the result or raising exceptions inside the loop
+                            done, pending = await asyncio.wait([asyncio.wrap_future(future)], timeout=15.0)
+                            if not done:
+                                # If it times out, send a heartbeat and continue waiting
+                                logger.info(f"ARCHITECT: Sending heartbeat for step '{plan_step_title}'")
+                                yield f"data: {json.dumps({'type': 'heartbeat', 'content': 'Still working...'})}\n\n"
+                        except Exception as wait_err:
+                            logger.error(f"ARCHITECT: Error during wait loop: {wait_err}")
+                            break
+                    
+                    # Task is done or loop broken, get the result
+                    if future.done():
+                        actual_step_description, agent_name, output = future.result()
+                    else:
+                        raise TimeoutError(f"Step '{plan_step_title}' did not complete in time.")
+
+                except Exception as e:
+                    logger.error(f"ARCHITECT: Step '{plan_step_title}' failed: {e}")
                     agent_name = "system"
-                    output = f"Error: Research step '{plan_step_title}' timed out and was skipped to prevent hanging."
+                    output = f"Error: Research step '{plan_step_title}' failed: {str(e)}"
                     actual_step_description = plan_step_title
                 
                 execution_history.append([plan_step_title, actual_step_description, output])
                 
-                # Send intermediate update
+                logger.info(f"ARCHITECT: Step {i} complete. Yielding step_complete.")
                 yield f"data: {json.dumps({
                     'type': 'step_complete', 
                     'index': i, 
                     'agent': agent_name, 
                     'output': output
                 })}\n\n"
-                logger.info(f"Step {i} completed by {agent_name}")
 
             # Final result is the last output
             full_response = execution_history[-1][-1] if execution_history else "No report generated."
             
-            # Send the final response to the frontend
+            # CRITICAL: Always yield the final report as tokens
+            logger.info("ARCHITECT: Yielding final report tokens")
+            # Split by smaller chunks if it's very large, but here we just send it
             yield f"data: {json.dumps({'type': 'token', 'content': full_response})}\n\n"
             
-            # 4. Save AI Message
             try:
                 supabase.table("messages").insert({
                     "session_id": session_id,
@@ -254,16 +179,18 @@ async def chat_analyze(request: AnalystRequest):
                     "content": full_response
                 }).execute()
             except Exception as e:
-                logger.error(f"Failed to save final AI report (likely session was deleted): {e}")
+                logger.error(f"Failed to save final AI report: {e}")
             
         except Exception as e:
             import traceback
             error_msg = f"ARCHITECT_ERROR: {str(e)}\n{traceback.format_exc()}"
             logger.error(error_msg)
             yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
-        
-        # End stream
-        yield "data: [DONE]\n\n"
+        finally:
+            logger.info(f"ARCHITECT: Closing stream for session {session_id}")
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

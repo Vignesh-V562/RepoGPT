@@ -13,7 +13,9 @@ from src.llm_provider import llm
 
 # Local storage for repos (temporary)
 # Local storage for repos (temporary)
-REPO_STORAGE_PATH = "./cloned_repos"
+# Local storage for repos (temporary) - Moved outside of server/ to avoid uvicorn reloads during ingestion
+REPO_STORAGE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "cloned_repos")
+
 
 
 def on_rm_error(func, path, exc_info):
@@ -28,6 +30,8 @@ def on_rm_error(func, path, exc_info):
 class RepoIngestionService:
     def __init__(self):
         self.thread_pool = ThreadPoolExecutor(max_workers=2)
+        os.makedirs(REPO_STORAGE_PATH, exist_ok=True)
+
 
     
     async def ingest_repo(self, repo_url: str, user_id: str, repo_entry_id: str):

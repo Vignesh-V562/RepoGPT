@@ -2,12 +2,17 @@ import os
 import json
 import re
 import logging
+import time
 from datetime import datetime
+from typing import List
+import ast
+
 from src.llm_provider import llm
 from src.agents import (
     research_agent,
     writer_agent,
     editor_agent,
+    critique_agent
 )
 
 logger = logging.getLogger(__name__)
@@ -26,10 +31,6 @@ def clean_json_block(raw: str) -> str:
     return raw.strip("` \n")
 
 
-from typing import List
-import json, ast
-
-
 def planner_agent(topic: str) -> List[str]:
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     prompt_path = os.path.join(base_dir, "prompts", "planner_agent.md")
@@ -38,10 +39,12 @@ def planner_agent(topic: str) -> List[str]:
     
     prompt = prompt_template.replace("{topic}", str(topic))
 
+    print(f"--- PLANNER_AGENT: STARTING FOR TOPIC: {topic} ---")
     raw, _ = llm.generate_content(
         mode="architect",
         prompt=prompt
     )
+    print(f"--- PLANNER_AGENT: GOT RAW RESPONSE ---")
     raw = raw.strip()
     logger.info(f"PLANNER: Raw response from LLM (length {len(raw)}): {raw[:500]}...")
 
@@ -118,7 +121,9 @@ def executor_agent_step(step_title: str, history: list, prompt: str):
     for i, (desc, agent, output) in enumerate(history):
         # We allow the very last step to be a bit longer if it's the draft we are currently editing
         is_last_step = (i == len(history) - 1)
-        limit = 3000 if is_last_step else 1500
+        # Reduced for Groq free tier TPM (12k limit) and context limits
+        limit = 1500 if is_last_step else 800
+
 
         
         truncated_output = truncate_text(output.strip(), max_chars=limit)
@@ -153,10 +158,9 @@ def executor_agent_step(step_title: str, history: list, prompt: str):
                 cleaned_output = clean_json_block(raw_output)
                 parsed = json.loads(cleaned_output)
                 content = parsed["content"]
-                import time
                 time.sleep(1) 
 
-                from src.agents import critique_agent
+                logger.info(f"EXECUTOR: Requesting critique for step '{step_title}'")
                 evaluation = critique_agent(goal=prompt, output=content)
                 logger.info(f"EXECUTOR: Critique for step '{step_title}': {evaluation.get('critique', 'unknown')}")
                 
@@ -172,6 +176,8 @@ def executor_agent_step(step_title: str, history: list, prompt: str):
                         final_content = f" SELF-CORRECTION FAILED after {max_retries + 1} attempts.\nReason: {reason}\n\n{content}"
                 else:
                     final_content = content
+                
+                logger.info(f"EXECUTOR: Step '{step_title}' completed successfully.")
                 break
             except Exception as e:
                 logger.error(f"Error in research processing: {e}")

@@ -111,6 +111,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
         try {
             const endpoint = mode === 'architect' ? '/api/chat/analyze' : '/api/chat/stream';
+            console.log(`Fetching ${endpoint} with payload:`, { query: input, userId, sessionId, repoId: activeRepoId });
             const response = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -122,45 +123,83 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 }),
             });
 
-            if (!response.body) return;
+            console.log(`Response status from ${endpoint}:`, response.status);
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error(`Error response:`, errorText);
+                setMessages(prev => [...prev, { role: 'ai', content: `❌ **Server Error (${response.status}):** ${errorText}` }]);
+                setIsLoading(false);
+                return;
+            }
+
+            if (!response.body) {
+                console.error("Response body is null");
+                setIsLoading(false);
+                return;
+            }
 
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let aiResponse = '';
+            let isStreamDone = false;
 
-            while (true) {
+            while (!isStreamDone) {
                 const { value, done } = await reader.read();
                 if (done) break;
 
-                const chunk = decoder.decode(value);
+                const chunk = decoder.decode(value, { stream: true });
                 const lines = chunk.split('\n');
 
                 for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        const dataStr = line.replace('data: ', '').trim();
-                        if (dataStr === '[DONE]') break;
+                    const trimmedLine = line.trim();
+                    if (!trimmedLine) continue;
+
+                    if (trimmedLine.startsWith('data: ')) {
+                        const dataStr = trimmedLine.replace('data: ', '').trim();
+                        if (dataStr === '[DONE]') {
+                            console.log("Stream [DONE] signal received.");
+                            isStreamDone = true;
+                            break;
+                        }
 
                         try {
                             const data = JSON.parse(dataStr);
+                            console.log("SSE Event:", data.type, data);
+
                             if (data.type === 'session') {
                                 setSessionId(data.sessionId);
                             } else if (data.type === 'status') {
                                 setCurrentStatus(data.content);
                             } else if (data.type === 'token') {
                                 aiResponse += data.content;
+                                // Use functional update to ensure we have the latest state
                                 setMessages(prev => {
-                                    const last = prev[prev.length - 1];
+                                    const newMessages = [...prev];
+                                    const last = newMessages[newMessages.length - 1];
                                     if (last && last.role === 'ai') {
-                                        return [...prev.slice(0, -1), { ...last, content: aiResponse }];
+                                        newMessages[newMessages.length - 1] = { ...last, content: aiResponse };
+                                        return newMessages;
                                     } else {
-                                        return [...prev, { role: 'ai', content: aiResponse, latency: '1.2s' }];
+                                        return [...newMessages, { role: 'ai', content: aiResponse, latency: '1.2s' }];
                                     }
                                 });
                             } else if (data.type === 'metadata' && data.files) {
                                 setActiveFiles(data.files);
+                            } else if (data.type === 'error') {
+                                console.error("Stream error event:", data.content);
+                                setMessages(prev => [...prev, { role: 'ai', content: `❌ **Error:** ${data.content}` }]);
+                            } else if (data.type === 'plan') {
+                                console.log("Received Architect plan:", data.steps);
+                            } else if (data.type === 'step_complete') {
+                                console.log(`Step ${data.index} completed by ${data.agent}`);
+                            } else if (data.type === 'heartbeat') {
+                                console.log("Stream heartbeat received:", data.content);
+                                // Just log it to keep the connection active in the eyes of the browser/proxy
                             }
                         } catch (e) {
-                            if (dataStr) {
+                            console.warn("Failed to parse SSE data chunk:", dataStr, e);
+                            // Fallback for non-JSON data that might still be part of the stream
+                            if (dataStr && dataStr !== '[DONE]') {
                                 aiResponse += dataStr;
                                 setMessages(prev => {
                                     const last = prev[prev.length - 1];
@@ -176,10 +215,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 }
             }
         } catch (err) {
-            console.error(err);
+            console.error("Stream reader error:", err);
+            setMessages(prev => [...prev, { role: 'ai', content: `❌ **Connection Error:** The stream was interrupted.` }]);
         } finally {
             setIsLoading(false);
             setCurrentStatus(null);
+            console.log("Chat stream finished, loading states cleared.");
         }
     };
 

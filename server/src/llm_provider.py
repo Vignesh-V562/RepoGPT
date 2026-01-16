@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 LLAMA_3_3_70B = "llama-3.3-70b-versatile"
 LLAMA_3_1_8B = "llama-3.1-8b-instant"
 
-# Mode routing as requested by user
+# Mode routing - Reverted to Groq as requested
 MODE_CONFIG = {
     "architect": LLAMA_3_3_70B,
     "analyst": LLAMA_3_3_70B,
@@ -219,11 +219,14 @@ class LLMProvider:
                     params["tools"] = groq_tools
                     params["tool_choice"] = "auto"
 
+                logger.info(f"GROQ: Sending request to {model_id}...")
+                start_time = time.time()
                 response = self.groq_client.chat.completions.create(**params, timeout=60.0)
+                duration = time.time() - start_time
                 message = response.choices[0].message
                 content = message.content or ""
                 
-                logger.debug(f"GROQ: Raw response received. Content length: {len(content)}")
+                logger.info(f"GROQ: response received in {duration:.2f}s. Content length: {len(content)}")
                 
                 tools_used = []
                 if message.tool_calls:
@@ -239,28 +242,51 @@ class LLMProvider:
                         # Execute tool immediately if it's in tool_mapping to match "automatic_function_calling"
                         if tool_name in tool_mapping:
                             tool_result = tool_mapping[tool_name](**tool_args)
+                            
+                            # TRUNCATION: Ensure tool result content is not too large for Groq TPM limits
+                            string_result = json.dumps(tool_result)
+                            if len(string_result) > 2000:
+                                if isinstance(tool_result, list):
+                                    # Truncate each item slightly or just return fewer items
+                                    tool_result = tool_result[:2] 
+                                    string_result = json.dumps(tool_result)
+                                if len(string_result) > 2000:
+                                    string_result = string_result[:2000] + "... [TRUNCATED]"
+
                             # Add tool result message
                             messages.append({
                                 "role": "tool",
                                 "tool_call_id": tool_call.id,
                                 "name": tool_name,
-                                "content": json.dumps(tool_result)
+                                "content": string_result
                             })
                             tools_used.append({"name": tool_name, "args": tool_args})
                     
                     # Call again to get final answer after tool results
                     if tools_used:
                         logger.info("GROQ: Sending tool results back to model for final response...")
-                        final_response = self.groq_client.chat.completions.create(
-                            model=model_id,
-                            messages=messages,
-                            timeout=60.0
-                        )
-                        content = final_response.choices[0].message.content or ""
-                        logger.info("GROQ: Final response received.")
+                        try:
+                            final_response = self.groq_client.chat.completions.create(
+                                model=model_id,
+                                messages=messages,
+                                timeout=60.0
+                            )
+                            content = final_response.choices[0].message.content or ""
+                            logger.info("GROQ: Final response received.")
+                        except Exception as fe:
+                            logger.error(f"GROQ: Final response failed: {fe}")
+                            if "413" in str(fe) or "too large" in str(fe).lower():
+                                content = "Error: The research output was too large for the model's current limits. Please try a more specific query."
+                            else:
+                                raise fe
                 
                 return content, tools_used
             except Exception as e:
+                err_msg = str(e).lower()
+                if "413" in err_msg or "too large" in err_msg:
+                    logger.error("GROQ: Payload too large error detected.")
+                    return "Error: Payload too large for Groq. Please try a simpler request.", []
+                
                 if self._is_retryable(e) and attempt < retries - 1:
                     wait = (attempt + 1) * 2
                     time.sleep(wait)
