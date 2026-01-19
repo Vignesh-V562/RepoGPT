@@ -1,9 +1,0 @@
-{
-    "version": 2,
-    "rewrites": [
-        {
-            "source": "/api/:path*",
-            "destination": "https://repogpt-backend-v9dv.onrender.com/api/:path*"
-        }
-    ]
-}
