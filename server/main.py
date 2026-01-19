@@ -44,7 +44,15 @@ def is_greeting(query: str) -> bool:
     return False
 
 app = FastAPI(title="RepoGPT API", version="2.0.0")
-# ... (lines 38-153)
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 @app.post("/api/chat/analyze")
 async def chat_analyze(request: RepoChatRequest):
     print(f"--- DEBUG: RECEIVED ANALYZE REQUEST: {request.query[:50]} ---")
