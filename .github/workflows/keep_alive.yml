@@ -1,0 +1,19 @@
+name: Keep Supabase Alive
+on:
+  schedule:
+    - cron: '30 3 * * 1,4'
+  workflow_dispatch: # Allows manual trigger
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase Database
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          # Replace 'repositories' with your actual table name
+          curl -X GET "$SUPABASE_URL/rest/v1/repositories?select=id&limit=1" \
+          -H "apikey: $SUPABASE_KEY" \
+          -H "Authorization: Bearer $SUPABASE_KEY"
