@@ -51,8 +51,101 @@ app.add_middleware(
     allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
 )
+
+@app.get("/")
+def root():
+    return {"message": "RepoGPT API is running"}
+
+@app.post("/api/repo/ingest")
+async def ingest_repo(request: IngestRequest, background_tasks: BackgroundTasks):
+    # 1. Create Repository Record (if not exists)
+    try:
+        existing = supabase.table("repositories").select("*").eq("url", request.repoUrl).eq("user_id", request.userId).execute()
+        if existing.data:
+            repo_id = existing.data[0]['id']
+            if existing.data[0]['status'] == 'ready':
+                return {"message": "Repo already indexed", "repoId": repo_id}
+        else:
+            # Create new
+            res = supabase.table("repositories").insert({
+                "url": request.repoUrl,
+                "user_id": request.userId,
+                "name": request.repoUrl.split("/")[-1],
+                "status": "pending"
+            }).execute()
+            repo_id = res.data[0]['id']
+
+        # 2. Trigger Background Task
+        background_tasks.add_task(repo_ingestion_service.ingest_repo, request.repoUrl, request.userId, repo_id)
+        
+        return {"message": "Ingestion started", "repoId": repo_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/chat/stream")
+async def chat_stream(request: RepoChatRequest):
+    # 1. Verify Session or Create One
+    session_id = request.sessionId
+    if not session_id:
+        # Create new session
+        res = supabase.table("chat_sessions").insert({
+            "user_id": request.userId,
+            "title": request.query[:30],
+            "repository_id": request.repoId
+        }).execute()
+        session_id = res.data[0]['id']
+
+    # 2. Save User Message
+    supabase.table("messages").insert({
+        "session_id": session_id,
+        "role": "user",
+        "content": request.query
+    }).execute()
+
+    # 3. Stream Response (SSE Format)
+    async def event_generator():
+        import json
+        full_response = ""
+        
+        # Send Session ID
+        yield f"data: {json.dumps({'type': 'session', 'sessionId': session_id})}\n\n"
+        
+        # Check for greeting
+        if is_greeting(request.query):
+            response = "Hello! I am RepoGPT, your AI codebase analyst. How can I help you today?"
+            yield f"data: {json.dumps({'type': 'token', 'content': response})}\n\n"
+            # Save AI Message
+            supabase.table("messages").insert({
+                "session_id": session_id,
+                "role": "ai",
+                "content": response
+            }).execute()
+            yield "data: [DONE]\n\n"
+            return
+
+        async for event in query_repo(request.repoId, request.query, request.sessionId):
+            if isinstance(event, dict):
+                if event["type"] == "token":
+                    full_response += event["content"]
+                yield f"data: {json.dumps(event)}\n\n"
+            else:
+                # Fallback for unexpected string yields
+                full_response += str(event)
+                yield f"data: {json.dumps({'type': 'token', 'content': str(event)})}\n\n"
+
+        # 4. Save AI Message
+        supabase.table("messages").insert({
+            "session_id": session_id,
+            "role": "ai",
+            "content": full_response
+        }).execute()
+        
+        # End stream
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 @app.post("/api/chat/analyze")
 async def chat_analyze(request: RepoChatRequest):
     print(f"--- DEBUG: RECEIVED ANALYZE REQUEST: {request.query[:50]} ---")
